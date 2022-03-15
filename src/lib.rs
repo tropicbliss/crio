@@ -14,35 +14,30 @@ type ByteStr = [u8];
 pub const ALGORITHM: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
 pub struct Client<T> {
-    f: File,
+    path: PathBuf,
     _phantom: std::marker::PhantomData<T>,
 }
 
 impl<T> Client<T> {
-    pub fn open(database: &str) -> io::Result<Self> {
+    pub fn open(database: &str) -> Self {
         let mut path = PathBuf::new();
         path.push(database);
         path.set_extension("cdb");
-        let f = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .append(true)
-            .open(path)?;
-        Ok(Self {
-            f,
+        Self {
+            path,
             _phantom: Default::default(),
-        })
+        }
     }
 
-    fn insert_inner(&mut self, raw_data: &ByteStr) -> io::Result<()> {
-        let mut f = BufWriter::new(&mut self.f);
+    fn insert_inner(&mut self, raw_data: &ByteStr, file: File) -> io::Result<()> {
+        let mut f = BufWriter::new(file);
         let data_len = raw_data.len();
         let checksum = ALGORITHM.checksum(&raw_data);
         f.seek(SeekFrom::End(0))?;
         f.write_u32::<LittleEndian>(checksum)?;
         f.write_u32::<LittleEndian>(data_len as u32)?;
         f.write_all(&raw_data)?;
+        f.flush()?;
         Ok(())
     }
 
@@ -75,8 +70,12 @@ where
     T: Serialize + DeserializeOwned,
 {
     pub fn insert(&mut self, item: impl Borrow<T>) -> io::Result<()> {
+        let file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&self.path)?;
         let encoded = bincode::serialize(item.borrow()).unwrap();
-        self.insert_inner(&encoded)?;
+        self.insert_inner(&encoded, file)?;
         Ok(())
     }
 
@@ -84,10 +83,11 @@ where
     where
         F: Fn(&T) -> bool,
     {
+        let file = OpenOptions::new().read(true).open(&self.path)?;
         let mut result = Vec::new();
-        let mut f = BufReader::new(&mut self.f);
+        let mut f = BufReader::new(file);
         loop {
-            f.seek(SeekFrom::Start(0))?;
+            f.seek(SeekFrom::Current(0))?;
             let raw_data = Self::process_document(&mut f);
             let raw_data = match raw_data {
                 Ok(d) => d,
@@ -110,9 +110,10 @@ where
     where
         F: Fn(&T) -> bool,
     {
-        let mut f = BufReader::new(&mut self.f);
+        let file = OpenOptions::new().read(true).write(true).open(&self.path)?;
+        let mut f = BufReader::new(file);
         loop {
-            f.seek(SeekFrom::Start(0))?;
+            f.seek(SeekFrom::Current(0))?;
             let raw_data = Self::process_document(&mut f);
             let raw_data = match raw_data {
                 Ok(d) => d,
@@ -136,6 +137,11 @@ where
         F: Fn(&T) -> bool,
         M: FnOnce(T) -> T,
     {
+        let file = OpenOptions::new().read(true).write(true).open(&self.path)?;
+        let mut f = BufReader::new(file);
+        loop {
+            f.seek(SeekFrom::Current(0))?;
+        }
         Ok(())
     }
 }
