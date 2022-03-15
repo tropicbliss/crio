@@ -11,12 +11,13 @@ type ByteStr = [u8];
 
 pub const ALGORITHM: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
-pub struct Client {
+pub struct Client<T> {
     f: File,
     index: Vec<(ByteString, u64)>,
+    _phantom: std::marker::PhantomData<T>,
 }
 
-impl Client {
+impl<T> Client<T> {
     pub fn open(database: &str) -> io::Result<Self> {
         let mut path = PathBuf::new();
         path.push(database);
@@ -28,7 +29,11 @@ impl Client {
             .append(true)
             .open(path)?;
         let index = Vec::new();
-        Ok(Self { f, index })
+        Ok(Self {
+            f,
+            index,
+            _phantom: Default::default(),
+        })
     }
 
     pub fn load(&mut self) -> io::Result<()> {
@@ -67,13 +72,13 @@ impl Client {
         Ok(data)
     }
 
-    pub fn insert(&mut self, data: &ByteStr) -> io::Result<()> {
+    fn insert(&mut self, data: &ByteStr) -> io::Result<()> {
         let position = self.insert_but_ignore_index(data)?;
         self.index.push((data.to_vec(), position));
         Ok(())
     }
 
-    pub fn insert_but_ignore_index(&mut self, data: &ByteStr) -> io::Result<u64> {
+    fn insert_but_ignore_index(&mut self, data: &ByteStr) -> io::Result<u64> {
         let mut f = BufWriter::new(&mut self.f);
         let data_len = data.len();
         let mut tmp = ByteString::with_capacity(data_len);
@@ -90,7 +95,7 @@ impl Client {
         Ok(current_position)
     }
 
-    pub fn get(&mut self, index: usize) -> io::Result<Option<ByteString>> {
+    fn get(&mut self, index: usize) -> io::Result<Option<ByteString>> {
         let position = match self.index.get(index) {
             None => return Ok(None),
             Some((_, position)) => *position,
@@ -99,14 +104,14 @@ impl Client {
         Ok(Some(data))
     }
 
-    pub fn get_at(&mut self, position: u64) -> io::Result<ByteString> {
+    fn get_at(&mut self, position: u64) -> io::Result<ByteString> {
         let mut f = BufReader::new(&mut self.f);
         f.seek(SeekFrom::Start(position))?;
         let data = Self::process_record(&mut f)?;
         Ok(data)
     }
 
-    pub fn find(&mut self, target: &ByteStr) -> io::Result<Option<(u64, ByteString)>> {
+    fn find(&mut self, target: &ByteStr) -> io::Result<Option<(u64, ByteString)>> {
         let mut f = BufReader::new(&mut self.f);
         let mut found: Option<(u64, ByteString)> = None;
         loop {
@@ -129,18 +134,14 @@ impl Client {
     }
 
     #[inline]
-    pub fn update(&mut self, data: &ByteStr) -> io::Result<()> {
+    fn update(&mut self, data: &ByteStr) -> io::Result<()> {
         self.insert(data)
     }
 
     #[inline]
-    pub fn delete(&mut self, data: &ByteStr) -> io::Result<()> {
+    fn delete(&mut self, data: &ByteStr) -> io::Result<()> {
         self.insert(data)
     }
-}
-
-pub struct Collection<T> {
-    index: T,
 }
 
 #[cfg(test)]
