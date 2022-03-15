@@ -1,6 +1,6 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crc::{Crc, CRC_32_ISO_HDLC};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Serialize};
 use std::{
     borrow::Borrow,
     fs::{File, OpenOptions},
@@ -44,6 +44,10 @@ impl<T> Client<T> {
         f.write_u32::<LittleEndian>(data_len as u32)?;
         f.write_all(&raw_data)?;
         Ok(())
+    }
+
+    fn delete_inner<R: Read>(f: &mut R) -> io::Result<()> {
+        todo!()
     }
 
     fn process_document<R: Read>(f: &mut R) -> io::Result<ByteString> {
@@ -100,6 +104,39 @@ where
             }
         }
         Ok(result)
+    }
+
+    pub fn delete<F>(&mut self, filter: F) -> io::Result<()>
+    where
+        F: Fn(&T) -> bool,
+    {
+        let mut f = BufReader::new(&mut self.f);
+        loop {
+            f.seek(SeekFrom::Start(0))?;
+            let raw_data = Self::process_document(&mut f);
+            let raw_data = match raw_data {
+                Ok(d) => d,
+                Err(e) => match e.kind() {
+                    io::ErrorKind::UnexpectedEof => {
+                        break;
+                    }
+                    _ => return Err(e),
+                },
+            };
+            let data: T = bincode::deserialize(&raw_data).unwrap();
+            if filter(&data) {
+                Self::delete_inner(&mut f)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn update<F, M>(&mut self, filter: F, map: M) -> io::Result<()>
+    where
+        F: Fn(&T) -> bool,
+        M: FnOnce(T) -> T,
+    {
+        Ok(())
     }
 }
 
