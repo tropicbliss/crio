@@ -1,5 +1,6 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crc::{Crc, CRC_32_ISO_HDLC};
+use serde::Serialize;
 use std::{
     fs::{File, OpenOptions},
     io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
@@ -72,7 +73,7 @@ impl<T> Client<T> {
         Ok(data)
     }
 
-    fn insert(&mut self, data: &ByteStr) -> io::Result<()> {
+    fn insert_inner(&mut self, data: &ByteStr) -> io::Result<()> {
         let position = self.insert_but_ignore_index(data)?;
         self.index.push((data.to_vec(), position));
         Ok(())
@@ -95,7 +96,7 @@ impl<T> Client<T> {
         Ok(current_position)
     }
 
-    fn get(&mut self, index: usize) -> io::Result<Option<ByteString>> {
+    fn get_inner(&mut self, index: usize) -> io::Result<Option<ByteString>> {
         let position = match self.index.get(index) {
             None => return Ok(None),
             Some((_, position)) => *position,
@@ -134,15 +135,17 @@ impl<T> Client<T> {
     }
 
     #[inline]
-    fn update(&mut self, data: &ByteStr) -> io::Result<()> {
-        self.insert(data)
+    fn update_inner(&mut self, data: &ByteStr) -> io::Result<()> {
+        self.insert_inner(data)
     }
 
     #[inline]
-    fn delete(&mut self, data: &ByteStr) -> io::Result<()> {
-        self.insert(data)
+    fn delete_inner(&mut self, data: &ByteStr) -> io::Result<()> {
+        self.insert_inner(data)
     }
 }
+
+impl<T> Client<T> where T: Serialize {}
 
 #[cfg(test)]
 mod tests {
