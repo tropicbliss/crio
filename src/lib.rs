@@ -1,7 +1,8 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crc::{Crc, CRC_32_ISO_HDLC};
-use serde::Serialize;
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::{
+    borrow::Borrow,
     fs::{File, OpenOptions},
     io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     path::PathBuf,
@@ -14,7 +15,6 @@ pub const ALGORITHM: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
 pub struct Client<T> {
     f: File,
-    index: Vec<(ByteString, u64)>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -29,20 +29,63 @@ impl<T> Client<T> {
             .create(true)
             .append(true)
             .open(path)?;
-        let index = Vec::new();
         Ok(Self {
             f,
-            index,
             _phantom: Default::default(),
         })
     }
 
-    pub fn load(&mut self) -> io::Result<()> {
+    fn insert_inner(&mut self, raw_data: &ByteStr) -> io::Result<()> {
+        let mut f = BufWriter::new(&mut self.f);
+        let data_len = raw_data.len();
+        let checksum = ALGORITHM.checksum(&raw_data);
+        f.seek(SeekFrom::End(0))?;
+        f.write_u32::<LittleEndian>(checksum)?;
+        f.write_u32::<LittleEndian>(data_len as u32)?;
+        f.write_all(&raw_data)?;
+        Ok(())
+    }
+
+    fn process_document<R: Read>(f: &mut R) -> io::Result<ByteString> {
+        let saved_checksum = f.read_u32::<LittleEndian>()?;
+        let raw_data_len = f.read_u32::<LittleEndian>()?;
+        let mut raw_data = ByteString::with_capacity(raw_data_len as usize);
+        {
+            f.by_ref()
+                .take(raw_data_len as u64)
+                .read_to_end(&mut raw_data)?;
+        }
+        let checksum = ALGORITHM.checksum(&raw_data);
+        if checksum != saved_checksum {
+            panic!(
+                "data corruption encountered ({:08x} != {:08x})",
+                checksum, saved_checksum
+            );
+        }
+        Ok(raw_data)
+    }
+}
+
+impl<T> Client<T>
+where
+    T: Serialize + DeserializeOwned,
+{
+    pub fn insert(&mut self, item: impl Borrow<T>) -> io::Result<()> {
+        let encoded = bincode::serialize(item.borrow()).unwrap();
+        self.insert_inner(&encoded)?;
+        Ok(())
+    }
+
+    pub fn get<F>(&mut self, filter: F) -> io::Result<Vec<T>>
+    where
+        F: Fn(&T) -> bool,
+    {
+        let mut result = Vec::new();
         let mut f = BufReader::new(&mut self.f);
         loop {
-            let current_position = f.seek(SeekFrom::Current(0))?;
-            let raw_data = Self::process_record(&mut f);
-            let data = match raw_data {
+            f.seek(SeekFrom::Start(0))?;
+            let raw_data = Self::process_document(&mut f);
+            let raw_data = match raw_data {
                 Ok(d) => d,
                 Err(e) => match e.kind() {
                     io::ErrorKind::UnexpectedEof => {
@@ -51,101 +94,14 @@ impl<T> Client<T> {
                     _ => return Err(e),
                 },
             };
-            self.index.push((data, current_position));
-        }
-        Ok(())
-    }
-
-    fn process_record<R: Read>(f: &mut R) -> io::Result<ByteString> {
-        let saved_checksum = f.read_u32::<LittleEndian>()?;
-        let data_len = f.read_f32::<LittleEndian>()?;
-        let mut data = ByteString::with_capacity(data_len as usize);
-        {
-            f.by_ref().take(data_len as u64).read_to_end(&mut data)?;
-        }
-        let checksum = ALGORITHM.checksum(&data);
-        if checksum != saved_checksum {
-            panic!(
-                "data corruption encountered ({:08x} != {:08x})",
-                checksum, saved_checksum
-            );
-        }
-        Ok(data)
-    }
-
-    fn insert_inner(&mut self, data: &ByteStr) -> io::Result<()> {
-        let position = self.insert_but_ignore_index(data)?;
-        self.index.push((data.to_vec(), position));
-        Ok(())
-    }
-
-    fn insert_but_ignore_index(&mut self, data: &ByteStr) -> io::Result<u64> {
-        let mut f = BufWriter::new(&mut self.f);
-        let data_len = data.len();
-        let mut tmp = ByteString::with_capacity(data_len);
-        for byte in data {
-            tmp.push(*byte);
-        }
-        let checksum = ALGORITHM.checksum(&tmp);
-        let next_byte = SeekFrom::End(0);
-        let current_position = f.seek(SeekFrom::Current(0))?;
-        f.seek(next_byte)?;
-        f.write_u32::<LittleEndian>(checksum)?;
-        f.write_u32::<LittleEndian>(data_len as u32)?;
-        f.write_all(&tmp)?;
-        Ok(current_position)
-    }
-
-    fn get_inner(&mut self, index: usize) -> io::Result<Option<ByteString>> {
-        let position = match self.index.get(index) {
-            None => return Ok(None),
-            Some((_, position)) => *position,
-        };
-        let data = self.get_at(position)?;
-        Ok(Some(data))
-    }
-
-    fn get_at(&mut self, position: u64) -> io::Result<ByteString> {
-        let mut f = BufReader::new(&mut self.f);
-        f.seek(SeekFrom::Start(position))?;
-        let data = Self::process_record(&mut f)?;
-        Ok(data)
-    }
-
-    fn find(&mut self, target: &ByteStr) -> io::Result<Option<(u64, ByteString)>> {
-        let mut f = BufReader::new(&mut self.f);
-        let mut found: Option<(u64, ByteString)> = None;
-        loop {
-            let position = f.seek(SeekFrom::Current(0))?;
-            let raw_data = Self::process_record(&mut f);
-            let data = match raw_data {
-                Ok(data) => data,
-                Err(e) => match e.kind() {
-                    io::ErrorKind::UnexpectedEof => {
-                        break;
-                    }
-                    _ => return Err(e),
-                },
-            };
-            if data == target {
-                found = Some((position, data));
+            let data = bincode::deserialize(&raw_data).unwrap();
+            if filter(&data) {
+                result.push(data);
             }
         }
-        Ok(found)
-    }
-
-    #[inline]
-    fn update_inner(&mut self, data: &ByteStr) -> io::Result<()> {
-        self.insert_inner(data)
-    }
-
-    #[inline]
-    fn delete_inner(&mut self, data: &ByteStr) -> io::Result<()> {
-        self.insert_inner(data)
+        Ok(result)
     }
 }
-
-impl<T> Client<T> where T: Serialize {}
 
 #[cfg(test)]
 mod tests {
