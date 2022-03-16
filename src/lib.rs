@@ -3,8 +3,9 @@ use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     borrow::Borrow,
-    fs::{File, OpenOptions},
+    fs::OpenOptions,
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
+    path::PathBuf,
 };
 use thiserror::Error;
 
@@ -23,18 +24,21 @@ const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
 #[derive(Debug)]
 pub struct Client {
-    f: File,
+    path: PathBuf,
 }
 
 impl Client {
-    pub fn new(db: &str) -> io::Result<Self> {
-        let file = OpenOptions::new().read(true).write(true).open(db)?;
-        Ok(Self { f: file })
+    pub fn new<T: AsRef<str>>(db: T) -> Self {
+        let mut path = PathBuf::new();
+        path.push(db.as_ref());
+        path.set_extension("cdb");
+        Self { path }
     }
 
-    pub fn load<T>(mut self) -> Result<Collection<T>, DatabaseError> {
+    pub fn load<T>(self) -> Result<Collection<T>, DatabaseError> {
+        let mut file = OpenOptions::new().read(true).open(&self.path)?;
         let mut buf = Vec::new();
-        self.f.read_to_end(&mut buf)?;
+        file.read_to_end(&mut buf)?;
         let readable = buf.as_slice();
         loop {
             let raw_doc = Self::process_document(readable);
@@ -47,7 +51,7 @@ impl Client {
                 }
             }
         }
-        Ok(Collection::new(buf, self))
+        Ok(Collection::new(buf, self.path))
     }
 
     fn process_document<R: Read>(mut f: R) -> Result<(), DatabaseError> {
@@ -69,16 +73,16 @@ impl Client {
 #[derive(Debug)]
 pub struct Collection<T> {
     buffer: Vec<u8>,
-    client: Client,
+    db_path: PathBuf,
     delete_pos: Vec<u64>,
     _phantom: std::marker::PhantomData<T>,
 }
 
 impl<T> Collection<T> {
-    fn new(buffer: Vec<u8>, client: Client) -> Self {
+    fn new(buffer: Vec<u8>, path: PathBuf) -> Self {
         Self {
             buffer,
-            client,
+            db_path: path,
             delete_pos: Vec::new(),
             _phantom: Default::default(),
         }
