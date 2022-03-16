@@ -4,98 +4,128 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::{
     borrow::Borrow,
     fs::{File, OpenOptions},
-    io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
-    path::PathBuf,
+    io::{self, Cursor, Read, Seek, SeekFrom, Write},
+    os::windows::raw,
 };
+use thiserror::Error;
 
-type ByteString = Vec<u8>;
-type ByteStr = [u8];
+#[derive(Error, Debug)]
+pub enum DatabaseError {
+    #[error(transparent)]
+    IO(#[from] std::io::Error),
+    #[error("data corruption encountered ({checksum:08x} != {expected_checksum:08x})")]
+    MismatchedChecksum {
+        checksum: u32,
+        expected_checksum: u32,
+    },
+}
 
-pub const ALGORITHM: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
+const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
-pub struct Client<T> {
-    path: PathBuf,
+#[derive(Debug)]
+pub struct Client {
+    f: File,
+}
+
+impl Client {
+    pub fn new(db: &str) -> io::Result<Self> {
+        let file = OpenOptions::new().read(true).write(true).open(db)?;
+        Ok(Self { f: file })
+    }
+
+    pub fn load<T>(mut self) -> Result<Collection<T>, DatabaseError> {
+        let mut buf = Vec::new();
+        self.f.read_to_end(&mut buf)?;
+        let readable = buf.as_slice();
+        loop {
+            let raw_doc = Self::process_document(readable);
+            if let Err(err) = raw_doc {
+                match err {
+                    DatabaseError::IO(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                        break;
+                    }
+                    _ => return Err(err),
+                }
+            }
+        }
+        Ok(Collection::new(buf, self))
+    }
+
+    fn process_document<R: Read>(mut f: R) -> Result<(), DatabaseError> {
+        let saved_checksum = f.read_u32::<LittleEndian>()?;
+        let data_len = f.read_u32::<LittleEndian>()?;
+        let mut data = Vec::with_capacity(data_len as usize);
+        f.take(data_len as u64).read_to_end(&mut data)?;
+        let checksum = CRC.checksum(&data);
+        if checksum != saved_checksum {
+            return Err(DatabaseError::MismatchedChecksum {
+                checksum,
+                expected_checksum: saved_checksum,
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub struct Collection<T> {
+    buffer: Vec<u8>,
+    client: Client,
     _phantom: std::marker::PhantomData<T>,
 }
 
-impl<T> Client<T> {
-    pub fn open(database: &str) -> Self {
-        let mut path = PathBuf::new();
-        path.push(database);
-        path.set_extension("cdb");
+impl<T> Collection<T> {
+    fn new(buffer: Vec<u8>, client: Client) -> Self {
         Self {
-            path,
+            buffer,
+            client,
             _phantom: Default::default(),
         }
     }
 
-    fn insert_inner(&mut self, raw_data: &ByteStr, file: File) -> io::Result<()> {
-        let mut f = BufWriter::new(file);
-        let data_len = raw_data.len();
-        let checksum = ALGORITHM.checksum(&raw_data);
-        f.seek(SeekFrom::End(0))?;
-        f.write_u32::<LittleEndian>(checksum)?;
-        f.write_u32::<LittleEndian>(data_len as u32)?;
-        f.write_all(&raw_data)?;
-        f.flush()?;
+    fn insert_inner(&mut self, encoded: Vec<u8>) -> Result<(), DatabaseError> {
+        let data_len = encoded.len();
+        let checksum = CRC.checksum(&encoded);
+        self.buffer.write_u32::<LittleEndian>(checksum)?;
+        self.buffer.write_u32::<LittleEndian>(data_len as u32)?;
+        self.buffer.write_all(&encoded)?;
         Ok(())
     }
 
-    fn delete_inner<R: Read>(f: &mut R) -> io::Result<()> {
-        todo!()
-    }
-
-    fn process_document<R: Read>(f: &mut R) -> io::Result<ByteString> {
-        let saved_checksum = f.read_u32::<LittleEndian>()?;
-        let raw_data_len = f.read_u32::<LittleEndian>()?;
-        let mut raw_data = ByteString::with_capacity(raw_data_len as usize);
-        {
-            f.by_ref()
-                .take(raw_data_len as u64)
-                .read_to_end(&mut raw_data)?;
-        }
-        let checksum = ALGORITHM.checksum(&raw_data);
-        if checksum != saved_checksum {
-            panic!(
-                "data corruption encountered ({:08x} != {:08x})",
-                checksum, saved_checksum
-            );
-        }
-        Ok(raw_data)
+    fn get_inner(f: &mut Cursor<&[u8]>) -> Result<Vec<u8>, DatabaseError> {
+        f.seek(SeekFrom::Current(4))?;
+        let data_len = f.read_u32::<LittleEndian>()?;
+        let mut data = Vec::with_capacity(data_len as usize);
+        f.take(data_len as u64).read_to_end(&mut data)?;
+        Ok(data)
     }
 }
 
-impl<T> Client<T>
+impl<T> Collection<T>
 where
     T: Serialize + DeserializeOwned,
 {
-    pub fn insert(&mut self, item: impl Borrow<T>) -> io::Result<()> {
-        let file = OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(&self.path)?;
+    pub fn insert(&mut self, item: impl Borrow<T>) -> Result<(), DatabaseError> {
         let encoded = bincode::serialize(item.borrow()).unwrap();
-        self.insert_inner(&encoded, file)?;
+        self.insert_inner(encoded)?;
         Ok(())
     }
 
-    pub fn get<F>(&mut self, filter: F) -> io::Result<Vec<T>>
+    pub fn get<F>(&mut self, filter: F) -> Result<Vec<T>, DatabaseError>
     where
         F: Fn(&T) -> bool,
     {
-        let file = OpenOptions::new().read(true).open(&self.path)?;
+        let mut readable = Cursor::new(self.buffer.as_slice());
         let mut result = Vec::new();
-        let mut f = BufReader::new(file);
         loop {
-            f.seek(SeekFrom::Current(0))?;
-            let raw_data = Self::process_document(&mut f);
+            let raw_data = Self::get_inner(&mut readable);
             let raw_data = match raw_data {
                 Ok(d) => d,
-                Err(e) => match e.kind() {
-                    io::ErrorKind::UnexpectedEof => {
+                Err(err) => match err {
+                    DatabaseError::IO(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
                         break;
                     }
-                    _ => return Err(e),
+                    _ => return Err(err),
                 },
             };
             let data = bincode::deserialize(&raw_data).unwrap();
@@ -104,45 +134,6 @@ where
             }
         }
         Ok(result)
-    }
-
-    pub fn delete<F>(&mut self, filter: F) -> io::Result<()>
-    where
-        F: Fn(&T) -> bool,
-    {
-        let file = OpenOptions::new().read(true).write(true).open(&self.path)?;
-        let mut f = BufReader::new(file);
-        loop {
-            f.seek(SeekFrom::Current(0))?;
-            let raw_data = Self::process_document(&mut f);
-            let raw_data = match raw_data {
-                Ok(d) => d,
-                Err(e) => match e.kind() {
-                    io::ErrorKind::UnexpectedEof => {
-                        break;
-                    }
-                    _ => return Err(e),
-                },
-            };
-            let data: T = bincode::deserialize(&raw_data).unwrap();
-            if filter(&data) {
-                Self::delete_inner(&mut f)?;
-            }
-        }
-        Ok(())
-    }
-
-    pub fn update<F, M>(&mut self, filter: F, map: M) -> io::Result<()>
-    where
-        F: Fn(&T) -> bool,
-        M: FnOnce(T) -> T,
-    {
-        let file = OpenOptions::new().read(true).write(true).open(&self.path)?;
-        let mut f = BufReader::new(file);
-        loop {
-            f.seek(SeekFrom::Current(0))?;
-        }
-        Ok(())
     }
 }
 
