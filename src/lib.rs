@@ -4,7 +4,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::{
     borrow::Borrow,
     fs::OpenOptions,
-    io::{self, Cursor, Read, Seek, SeekFrom, Write},
+    io::{self, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
     path::PathBuf,
 };
 use thiserror::Error;
@@ -88,6 +88,33 @@ impl<T> Collection<T> {
         }
     }
 
+    pub fn flush(&mut self) -> Result<(), DatabaseError> {
+        let file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&self.db_path)?;
+        let mut f = BufWriter::new(file);
+        let mut readable = Cursor::new(self.buffer.as_slice());
+        loop {
+            let current_position = readable.seek(SeekFrom::Current(0))?;
+            let raw_data = Self::flush_inner(&mut readable);
+            let raw_data = match raw_data {
+                Ok(d) => d,
+                Err(err) => match err {
+                    DatabaseError::IO(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                        break;
+                    }
+                    _ => return Err(err),
+                },
+            };
+            if !self.delete_pos.contains(&current_position) {
+                f.write_all(&raw_data)?;
+            }
+        }
+        f.flush()?;
+        Ok(())
+    }
+
     fn insert_inner(&mut self, encoded: Vec<u8>) -> Result<(), DatabaseError> {
         let data_len = encoded.len();
         let checksum = CRC.checksum(&encoded);
@@ -101,6 +128,16 @@ impl<T> Collection<T> {
         f.read_u32::<LittleEndian>()?;
         let data_len = f.read_u32::<LittleEndian>()?;
         let mut data = Vec::with_capacity(data_len as usize);
+        f.take(data_len as u64).read_to_end(&mut data)?;
+        Ok(data)
+    }
+
+    fn flush_inner<R: Read>(f: &mut R) -> Result<Vec<u8>, DatabaseError> {
+        let checksum = f.read_u32::<LittleEndian>()?;
+        let data_len = f.read_u32::<LittleEndian>()?;
+        let mut data = Vec::with_capacity(data_len as usize + 8);
+        data.write_u32::<LittleEndian>(checksum)?;
+        data.write_u32::<LittleEndian>(data_len)?;
         f.take(data_len as u64).read_to_end(&mut data)?;
         Ok(data)
     }
@@ -196,6 +233,12 @@ where
             }
         }
         Ok(())
+    }
+}
+
+impl<T> Drop for Collection<T> {
+    fn drop(&mut self) {
+        let _ = self.flush();
     }
 }
 
