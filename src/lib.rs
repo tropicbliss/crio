@@ -70,6 +70,7 @@ impl Client {
 pub struct Collection<T> {
     buffer: Vec<u8>,
     client: Client,
+    delete_pos: Vec<u64>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -78,6 +79,7 @@ impl<T> Collection<T> {
         Self {
             buffer,
             client,
+            delete_pos: Vec::new(),
             _phantom: Default::default(),
         }
     }
@@ -91,8 +93,8 @@ impl<T> Collection<T> {
         Ok(())
     }
 
-    fn get_inner(f: &mut Cursor<&[u8]>) -> Result<Vec<u8>, DatabaseError> {
-        f.seek(SeekFrom::Current(4))?;
+    fn get_inner<R: Read>(f: &mut R) -> Result<Vec<u8>, DatabaseError> {
+        f.read_u32::<LittleEndian>()?;
         let data_len = f.read_u32::<LittleEndian>()?;
         let mut data = Vec::with_capacity(data_len as usize);
         f.take(data_len as u64).read_to_end(&mut data)?;
@@ -114,7 +116,7 @@ where
     where
         F: Fn(&T) -> bool,
     {
-        let mut readable = Cursor::new(self.buffer.as_slice());
+        let mut readable = self.buffer.as_slice();
         let mut result = Vec::new();
         loop {
             let raw_data = Self::get_inner(&mut readable);
@@ -133,6 +135,63 @@ where
             }
         }
         Ok(result)
+    }
+
+    pub fn update<F, M>(&mut self, filter: F, map: M) -> Result<(), DatabaseError>
+    where
+        F: Fn(&T) -> bool,
+        M: Fn(T) -> T,
+    {
+        let mut readable = Cursor::new(self.buffer.as_slice());
+        let mut transformed_values = Vec::new();
+        loop {
+            let current_position = readable.seek(SeekFrom::Current(0))?;
+            let raw_data = Self::get_inner(&mut readable);
+            let raw_data = match raw_data {
+                Ok(d) => d,
+                Err(err) => match err {
+                    DatabaseError::IO(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                        break;
+                    }
+                    _ => return Err(err),
+                },
+            };
+            let data = bincode::deserialize(&raw_data).unwrap();
+            if filter(&data) {
+                self.delete_pos.push(current_position);
+                let transformed_value = map(data);
+                transformed_values.push(transformed_value);
+            }
+        }
+        for value in transformed_values {
+            self.insert(value)?;
+        }
+        Ok(())
+    }
+
+    pub fn delete<F>(&mut self, filter: F) -> Result<(), DatabaseError>
+    where
+        F: Fn(T) -> bool,
+    {
+        let mut readable = Cursor::new(self.buffer.as_slice());
+        loop {
+            let current_position = readable.seek(SeekFrom::Current(0))?;
+            let raw_data = Self::get_inner(&mut readable);
+            let raw_data = match raw_data {
+                Ok(d) => d,
+                Err(err) => match err {
+                    DatabaseError::IO(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                        break;
+                    }
+                    _ => return Err(err),
+                },
+            };
+            let data = bincode::deserialize(&raw_data).unwrap();
+            if filter(data) {
+                self.delete_pos.push(current_position);
+            }
+        }
+        Ok(())
     }
 }
 
