@@ -242,6 +242,20 @@ impl<T> Drop for Collection<T> {
     }
 }
 
+pub struct DatabasePoisonError<T> {
+    collection: Collection<T>,
+}
+
+impl<T> DatabasePoisonError<T> {
+    fn new(collection: Collection<T>) -> Self {
+        Self { collection }
+    }
+
+    pub fn into_inner(self) -> Collection<T> {
+        self.collection
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
