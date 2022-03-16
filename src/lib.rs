@@ -5,7 +5,6 @@ use std::{
     borrow::Borrow,
     fs::{File, OpenOptions},
     io::{self, Cursor, Read, Seek, SeekFrom, Write},
-    os::windows::raw,
 };
 use thiserror::Error;
 
