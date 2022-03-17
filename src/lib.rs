@@ -14,7 +14,7 @@ const DATA_VERSION: u32 = 1;
 #[derive(Error, Debug)]
 pub enum DatabaseError<T> {
     #[error(transparent)]
-    IO(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
     #[error(transparent)]
     MismatchedChecksum(DataPoisonError<T>),
     #[error("inserted data too large, object of {0} bytes > u32::MAX")]
@@ -28,7 +28,7 @@ pub enum DatabaseError<T> {
 #[derive(Error, Debug)]
 enum InnerDatabaseError {
     #[error(transparent)]
-    IO(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
     #[error("you should not be able to see this error")]
     MismatchedChecksum {
         saved_checksum: u32,
@@ -87,7 +87,7 @@ impl Client {
             let raw_doc = Self::process_document(&mut f);
             if let Err(err) = raw_doc {
                 match err {
-                    InnerDatabaseError::IO(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                    InnerDatabaseError::Io(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
                         break;
                     }
                     InnerDatabaseError::MismatchedChecksum {
@@ -96,7 +96,7 @@ impl Client {
                     } => {
                         is_corrupted = Some(Checksum::new(s, e));
                     }
-                    InnerDatabaseError::IO(e) => return Err(DatabaseError::IO(e)),
+                    InnerDatabaseError::Io(e) => return Err(DatabaseError::Io(e)),
                 }
             }
             count += 1;
@@ -159,7 +159,7 @@ impl<T> Collection<T> {
             let raw_data = match raw_data {
                 Ok(d) => d,
                 Err(err) => match err {
-                    DatabaseError::IO(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                    DatabaseError::Io(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
                         break;
                     }
                     _ => return Err(err),
@@ -236,7 +236,7 @@ where
             let raw_data = match raw_data {
                 Ok(d) => d,
                 Err(err) => match err {
-                    DatabaseError::IO(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                    DatabaseError::Io(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
                         break;
                     }
                     _ => return Err(err),
@@ -263,7 +263,7 @@ where
             let raw_data = match raw_data {
                 Ok(d) => d,
                 Err(err) => match err {
-                    DatabaseError::IO(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                    DatabaseError::Io(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
                         break;
                     }
                     _ => return Err(err),
@@ -293,7 +293,7 @@ where
             let raw_data = match raw_data {
                 Ok(d) => d,
                 Err(err) => match err {
-                    DatabaseError::IO(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                    DatabaseError::Io(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
                         break;
                     }
                     _ => return Err(err),
