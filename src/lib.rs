@@ -18,8 +18,8 @@ pub enum DatabaseError {
         checksum: u32,
         expected_checksum: u32,
     },
-    #[error("inserted data too large")]
-    DataTooLarge,
+    #[error("inserted data too large, object of {0} bytes > u32::MAX")]
+    DataTooLarge(usize),
 }
 
 const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
@@ -135,7 +135,7 @@ impl<T> Collection<T> {
     fn insert_inner(&mut self, encoded: &[u8]) -> Result<(), DatabaseError> {
         let data_len = encoded.len();
         if data_len > u32::MAX as usize {
-            return Err(DatabaseError::DataTooLarge);
+            return Err(DatabaseError::DataTooLarge(data_len));
         }
         let checksum = CRC.checksum(encoded);
         self.buffer.write_u32::<LittleEndian>(checksum)?;
