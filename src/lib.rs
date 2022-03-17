@@ -1,5 +1,3 @@
-#![warn(clippy::pedantic)]
-
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{de::DeserializeOwned, Serialize};
@@ -63,7 +61,7 @@ impl Client {
         let saved_checksum = f.read_u32::<LittleEndian>()?;
         let data_len = f.read_u32::<LittleEndian>()?;
         let mut data = Vec::with_capacity(data_len as usize);
-        f.take(data_len as u64).read_to_end(&mut data)?;
+        f.take(u64::from(data_len)).read_to_end(&mut data)?;
         let checksum = CRC.checksum(&data);
         if checksum != saved_checksum {
             return Err(DatabaseError::MismatchedChecksum {
@@ -91,7 +89,7 @@ impl<T> Collection<T> {
             db_path: path,
             delete_pos: Vec::new(),
             length: count,
-            _phantom: Default::default(),
+            _phantom: std::marker::PhantomData::default(),
         }
     }
 
@@ -122,20 +120,22 @@ impl<T> Collection<T> {
         Ok(())
     }
 
+    #[must_use]
     pub fn len(&self) -> usize {
         self.length
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.length == 0
     }
 
     fn insert_inner(&mut self, encoded: &[u8]) -> Result<(), DatabaseError> {
         let data_len = encoded.len();
-        let checksum = CRC.checksum(&encoded);
+        let checksum = CRC.checksum(encoded);
         self.buffer.write_u32::<LittleEndian>(checksum)?;
         self.buffer.write_u32::<LittleEndian>(data_len as u32)?;
-        self.buffer.write_all(&encoded)?;
+        self.buffer.write_all(encoded)?;
         Ok(())
     }
 
@@ -143,7 +143,7 @@ impl<T> Collection<T> {
         f.read_u32::<LittleEndian>()?;
         let data_len = f.read_u32::<LittleEndian>()?;
         let mut data = Vec::with_capacity(data_len as usize);
-        f.take(data_len as u64).read_to_end(&mut data)?;
+        f.take(u64::from(data_len)).read_to_end(&mut data)?;
         Ok(data)
     }
 
