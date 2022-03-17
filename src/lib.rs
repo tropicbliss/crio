@@ -20,6 +20,8 @@ pub enum DatabaseError {
     },
     #[error("inserted data too large, object of {0} bytes > u32::MAX")]
     DataTooLarge(usize),
+    #[error(transparent)]
+    SerdeError(#[from] bincode::Error),
 }
 
 const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
@@ -168,7 +170,7 @@ where
     T: Serialize + DeserializeOwned,
 {
     pub fn insert(&mut self, item: impl Borrow<T>) -> Result<(), DatabaseError> {
-        let encoded = bincode::serialize(item.borrow()).unwrap();
+        let encoded = bincode::serialize(item.borrow())?;
         self.insert_inner(&encoded)?;
         self.length += 1;
         Ok(())
@@ -191,7 +193,7 @@ where
                     _ => return Err(err),
                 },
             };
-            let data = bincode::deserialize(&raw_data).unwrap();
+            let data = bincode::deserialize(&raw_data)?;
             if filter(&data) {
                 result.push(data);
             }
@@ -218,7 +220,7 @@ where
                     _ => return Err(err),
                 },
             };
-            let data = bincode::deserialize(&raw_data).unwrap();
+            let data = bincode::deserialize(&raw_data)?;
             if filter(&data) {
                 self.delete_pos.push(current_position);
                 let transformed_value = map(data);
@@ -248,7 +250,7 @@ where
                     _ => return Err(err),
                 },
             };
-            let data = bincode::deserialize(&raw_data).unwrap();
+            let data = bincode::deserialize(&raw_data)?;
             if filter(data) {
                 self.delete_pos.push(current_position);
                 self.length -= 1;
