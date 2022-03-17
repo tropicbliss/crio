@@ -1,3 +1,5 @@
+#![warn(clippy::pedantic)]
+
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{de::DeserializeOwned, Serialize};
@@ -41,6 +43,7 @@ impl Client {
         let mut buf = Vec::new();
         f.read_to_end(&mut buf)?;
         f.seek(SeekFrom::Start(0))?;
+        let mut count = 0;
         loop {
             let raw_doc = Self::process_document(&mut f);
             if let Err(err) = raw_doc {
@@ -51,8 +54,9 @@ impl Client {
                     _ => return Err(err),
                 }
             }
+            count += 1;
         }
-        Ok(Collection::new(buf, self.path))
+        Ok(Collection::new(buf, self.path, count))
     }
 
     fn process_document<R: Read>(f: &mut R) -> Result<(), DatabaseError> {
@@ -63,7 +67,7 @@ impl Client {
         let checksum = CRC.checksum(&data);
         if checksum != saved_checksum {
             return Err(DatabaseError::MismatchedChecksum {
-                checksum: checksum,
+                checksum,
                 expected_checksum: saved_checksum,
             });
         }
@@ -76,15 +80,17 @@ pub struct Collection<T> {
     buffer: Vec<u8>,
     db_path: PathBuf,
     delete_pos: Vec<u64>,
+    length: usize,
     _phantom: std::marker::PhantomData<T>,
 }
 
 impl<T> Collection<T> {
-    fn new(buffer: Vec<u8>, path: PathBuf) -> Self {
+    fn new(buffer: Vec<u8>, path: PathBuf, count: usize) -> Self {
         Self {
             buffer,
             db_path: path,
             delete_pos: Vec::new(),
+            length: count,
             _phantom: Default::default(),
         }
     }
@@ -116,7 +122,15 @@ impl<T> Collection<T> {
         Ok(())
     }
 
-    fn insert_inner(&mut self, encoded: Vec<u8>) -> Result<(), DatabaseError> {
+    pub fn len(&self) -> usize {
+        self.length
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
+    }
+
+    fn insert_inner(&mut self, encoded: &[u8]) -> Result<(), DatabaseError> {
         let data_len = encoded.len();
         let checksum = CRC.checksum(&encoded);
         self.buffer.write_u32::<LittleEndian>(checksum)?;
@@ -150,7 +164,8 @@ where
 {
     pub fn insert(&mut self, item: impl Borrow<T>) -> Result<(), DatabaseError> {
         let encoded = bincode::serialize(item.borrow()).unwrap();
-        self.insert_inner(encoded)?;
+        self.insert_inner(&encoded)?;
+        self.length += 1;
         Ok(())
     }
 
@@ -231,6 +246,7 @@ where
             let data = bincode::deserialize(&raw_data).unwrap();
             if filter(data) {
                 self.delete_pos.push(current_position);
+                self.length -= 1;
             }
         }
         Ok(())
