@@ -209,7 +209,7 @@ impl<T> Collection<T> {
         let mut data = Vec::with_capacity(data_len as usize + 8);
         data.write_u32::<LittleEndian>(checksum)?;
         data.write_u32::<LittleEndian>(data_len)?;
-        f.take(data_len as u64).read_to_end(&mut data)?;
+        f.take(u64::from(data_len)).read_to_end(&mut data)?;
         Ok(data)
     }
 }
