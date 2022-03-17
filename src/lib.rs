@@ -255,7 +255,7 @@ where
 
 impl<T> Drop for Collection<T> {
     fn drop(&mut self) {
-        let _ = self.flush();
+        let _r = self.flush();
     }
 }
 
