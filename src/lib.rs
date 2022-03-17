@@ -76,7 +76,10 @@ impl Client {
 
     pub fn load<T>(self) -> Result<Collection<T>, DatabaseError<T>> {
         let mut is_corrupted = None;
-        let file = OpenOptions::new().read(true).open(&self.path)?;
+        let file = OpenOptions::new()
+            .read(true)
+            .create(true)
+            .open(&self.path)?;
         let mut f = BufReader::new(file);
         let mut buf = Vec::new();
         f.read_to_end(&mut buf)?;
