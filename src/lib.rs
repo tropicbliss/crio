@@ -9,6 +9,8 @@ use std::{
 };
 use thiserror::Error;
 
+const DATA_VERSION: u32 = 1;
+
 #[derive(Error, Debug)]
 pub enum DatabaseError {
     #[error(transparent)]
@@ -22,6 +24,8 @@ pub enum DatabaseError {
     DataTooLarge(usize),
     #[error(transparent)]
     SerdeError(#[from] bincode::Error),
+    #[error("wrong data version: expected {DATA_VERSION}, found {0}")]
+    WrongDataVersion(u32),
 }
 
 const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
@@ -39,6 +43,14 @@ impl Client {
         Self { path }
     }
 
+    fn validate_data_scheme<R: Read>(f: &mut R) -> Result<(), DatabaseError> {
+        let saved_version = f.read_u32::<LittleEndian>()?;
+        if saved_version != DATA_VERSION {
+            return Err(DatabaseError::WrongDataVersion(saved_version));
+        }
+        Ok(())
+    }
+
     pub fn load<T>(self) -> Result<Collection<T>, DatabaseError> {
         let file = OpenOptions::new().read(true).open(&self.path)?;
         let mut f = BufReader::new(file);
@@ -46,6 +58,7 @@ impl Client {
         f.read_to_end(&mut buf)?;
         f.seek(SeekFrom::Start(0))?;
         let mut count = 0;
+        Self::validate_data_scheme(&mut f)?;
         loop {
             let raw_doc = Self::process_document(&mut f);
             if let Err(err) = raw_doc {
@@ -104,6 +117,7 @@ impl<T> Collection<T> {
             .open(&self.db_path)?;
         let mut f = BufWriter::new(file);
         let mut readable = Cursor::new(self.buffer.as_slice());
+        f.write_u32::<LittleEndian>(DATA_VERSION)?;
         loop {
             let current_position = readable.seek(SeekFrom::Current(0))?;
             let raw_data = Self::flush_inner(&mut readable);
