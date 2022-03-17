@@ -333,6 +333,14 @@ impl<T> DataPoisonError<T> {
     pub fn into_inner(self) -> Collection<T> {
         self.collection
     }
+
+    pub fn get_ref(&self) -> &Collection<T> {
+        &self.collection
+    }
+
+    pub fn get_mut(&mut self) -> &mut Collection<T> {
+        &mut self.collection
+    }
 }
 
 #[cfg(test)]
