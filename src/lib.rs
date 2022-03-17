@@ -12,20 +12,43 @@ use thiserror::Error;
 const DATA_VERSION: u32 = 1;
 
 #[derive(Error, Debug)]
-pub enum DatabaseError {
+pub enum DatabaseError<T> {
     #[error(transparent)]
     IO(#[from] std::io::Error),
-    #[error("data corruption encountered ({checksum:08x} != {expected_checksum:08x})")]
-    MismatchedChecksum {
-        checksum: u32,
-        expected_checksum: u32,
-    },
+    #[error(transparent)]
+    MismatchedChecksum(DataPoisonError<T>),
     #[error("inserted data too large, object of {0} bytes > u32::MAX")]
     DataTooLarge(usize),
     #[error(transparent)]
     SerdeError(#[from] bincode::Error),
     #[error("wrong data version: expected {DATA_VERSION}, found {0}")]
     WrongDataVersion(u32),
+}
+
+#[derive(Error, Debug)]
+enum InnerDatabaseError {
+    #[error(transparent)]
+    IO(#[from] std::io::Error),
+    #[error("you should not be able to see this error")]
+    MismatchedChecksum {
+        saved_checksum: u32,
+        expected_checksum: u32,
+    },
+}
+
+#[derive(Debug)]
+struct Checksum {
+    saved_checksum: u32,
+    expected_checksum: u32,
+}
+
+impl Checksum {
+    fn new(saved_checksum: u32, expected_checksum: u32) -> Self {
+        Self {
+            saved_checksum,
+            expected_checksum,
+        }
+    }
 }
 
 const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
@@ -43,7 +66,7 @@ impl Client {
         Self { path }
     }
 
-    fn validate_data_scheme<R: Read>(f: &mut R) -> Result<(), DatabaseError> {
+    fn validate_data_scheme<R: Read, T>(f: &mut R) -> Result<(), DatabaseError<T>> {
         let saved_version = f.read_u32::<LittleEndian>()?;
         if saved_version != DATA_VERSION {
             return Err(DatabaseError::WrongDataVersion(saved_version));
@@ -51,7 +74,8 @@ impl Client {
         Ok(())
     }
 
-    pub fn load<T>(self) -> Result<Collection<T>, DatabaseError> {
+    pub fn load<T>(self) -> Result<Collection<T>, DatabaseError<T>> {
+        let mut is_corrupted = None;
         let file = OpenOptions::new().read(true).open(&self.path)?;
         let mut f = BufReader::new(file);
         let mut buf = Vec::new();
@@ -63,26 +87,37 @@ impl Client {
             let raw_doc = Self::process_document(&mut f);
             if let Err(err) = raw_doc {
                 match err {
-                    DatabaseError::IO(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                    InnerDatabaseError::IO(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
                         break;
                     }
-                    _ => return Err(err),
+                    InnerDatabaseError::MismatchedChecksum {
+                        saved_checksum: s,
+                        expected_checksum: e,
+                    } => {
+                        is_corrupted = Some(Checksum::new(s, e));
+                    }
+                    InnerDatabaseError::IO(e) => return Err(DatabaseError::IO(e)),
                 }
             }
             count += 1;
         }
-        Ok(Collection::new(buf, self.path, count))
+        let collection = Collection::new(buf, self.path, count);
+        if let Some(checksum_data) = is_corrupted {
+            let error = DataPoisonError::new(collection, checksum_data);
+            return Err(DatabaseError::MismatchedChecksum(error));
+        }
+        Ok(collection)
     }
 
-    fn process_document<R: Read>(f: &mut R) -> Result<(), DatabaseError> {
+    fn process_document<R: Read>(f: &mut R) -> Result<(), InnerDatabaseError> {
         let saved_checksum = f.read_u32::<LittleEndian>()?;
         let data_len = f.read_u32::<LittleEndian>()?;
         let mut data = Vec::with_capacity(data_len as usize);
         f.take(u64::from(data_len)).read_to_end(&mut data)?;
         let checksum = CRC.checksum(&data);
         if checksum != saved_checksum {
-            return Err(DatabaseError::MismatchedChecksum {
-                checksum,
+            return Err(InnerDatabaseError::MismatchedChecksum {
+                saved_checksum: checksum,
                 expected_checksum: saved_checksum,
             });
         }
@@ -110,7 +145,7 @@ impl<T> Collection<T> {
         }
     }
 
-    pub fn flush(&mut self) -> Result<(), DatabaseError> {
+    pub fn flush(&mut self) -> Result<(), DatabaseError<T>> {
         let file = OpenOptions::new()
             .write(true)
             .truncate(true)
@@ -148,7 +183,7 @@ impl<T> Collection<T> {
         self.length == 0
     }
 
-    fn insert_inner(&mut self, encoded: &[u8]) -> Result<(), DatabaseError> {
+    fn insert_inner(&mut self, encoded: &[u8]) -> Result<(), DatabaseError<T>> {
         let data_len = encoded.len();
         if data_len > u32::MAX as usize {
             return Err(DatabaseError::DataTooLarge(data_len));
@@ -160,7 +195,7 @@ impl<T> Collection<T> {
         Ok(())
     }
 
-    fn get_inner<R: Read>(f: &mut R) -> Result<Vec<u8>, DatabaseError> {
+    fn get_inner<R: Read>(f: &mut R) -> Result<Vec<u8>, DatabaseError<T>> {
         f.read_u32::<LittleEndian>()?;
         let data_len = f.read_u32::<LittleEndian>()?;
         let mut data = Vec::with_capacity(data_len as usize);
@@ -168,7 +203,7 @@ impl<T> Collection<T> {
         Ok(data)
     }
 
-    fn flush_inner<R: Read>(f: &mut R) -> Result<Vec<u8>, DatabaseError> {
+    fn flush_inner<R: Read>(f: &mut R) -> Result<Vec<u8>, DatabaseError<T>> {
         let checksum = f.read_u32::<LittleEndian>()?;
         let data_len = f.read_u32::<LittleEndian>()?;
         let mut data = Vec::with_capacity(data_len as usize + 8);
@@ -183,14 +218,14 @@ impl<T> Collection<T>
 where
     T: Serialize + DeserializeOwned,
 {
-    pub fn insert(&mut self, item: impl Borrow<T>) -> Result<(), DatabaseError> {
+    pub fn insert(&mut self, item: impl Borrow<T>) -> Result<(), DatabaseError<T>> {
         let encoded = bincode::serialize(item.borrow())?;
         self.insert_inner(&encoded)?;
         self.length += 1;
         Ok(())
     }
 
-    pub fn get<F>(&mut self, filter: F) -> Result<Vec<T>, DatabaseError>
+    pub fn get<F>(&mut self, filter: F) -> Result<Vec<T>, DatabaseError<T>>
     where
         F: Fn(&T) -> bool,
     {
@@ -215,7 +250,7 @@ where
         Ok(result)
     }
 
-    pub fn update<F, M>(&mut self, filter: F, map: M) -> Result<(), DatabaseError>
+    pub fn update<F, M>(&mut self, filter: F, map: M) -> Result<(), DatabaseError<T>>
     where
         F: Fn(&T) -> bool,
         M: Fn(T) -> T,
@@ -247,7 +282,7 @@ where
         Ok(())
     }
 
-    pub fn delete<F>(&mut self, filter: F) -> Result<(), DatabaseError>
+    pub fn delete<F>(&mut self, filter: F) -> Result<(), DatabaseError<T>>
     where
         F: Fn(T) -> bool,
     {
@@ -277,6 +312,26 @@ where
 impl<T> Drop for Collection<T> {
     fn drop(&mut self) {
         let _r = self.flush();
+    }
+}
+
+#[derive(Error, Debug)]
+#[error("data corruption encountered ({:08x} != {:08x})", .checksum.saved_checksum, .checksum.expected_checksum)]
+pub struct DataPoisonError<T> {
+    collection: Collection<T>,
+    checksum: Checksum,
+}
+
+impl<T> DataPoisonError<T> {
+    fn new(collection: Collection<T>, checksum: Checksum) -> Self {
+        Self {
+            collection,
+            checksum,
+        }
+    }
+
+    pub fn into_inner(self) -> Collection<T> {
+        self.collection
     }
 }
 
