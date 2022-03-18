@@ -14,7 +14,7 @@
 //!
 //! Note that this is not an embedded database and there are other libraries which are better suited
 //! for this task, such as `sled`:
-//! https://github.com/spacejam/sled
+//! <https://github.com/spacejam/sled>
 //!
 //! # Examples
 //!
@@ -131,11 +131,14 @@ where
     T: Serialize + DeserializeOwned,
 {
     /// Creates a new client object. It opens a file if a file with the same name exists or
-    /// creates a new file if it doesn't exist. This returns an error if it fails to open
-    /// or create a new file.
+    /// creates a new file if it doesn't exist.
     ///
-    /// NOTE: This methods automatically appends a `.pdc` file extension to your path if
+    /// *NOTE*: This methods automatically appends a `.pdc` file extension to your path if
     /// the extension is not included in the `PathBuf` passed to this method.
+    ///
+    /// # Errors
+    ///
+    /// - The usual `std::io::Error` if it fails to open or create a new file.
     pub fn new(mut path: PathBuf) -> Result<Self, DatabaseError<T>> {
         path.set_extension("pdc");
         let file = OpenOptions::new()
@@ -159,9 +162,26 @@ where
     }
 
     /// Returns a vector of the deserialized object. If the file is empty, this method
-    /// returns `Ok(None)`. If a checksum mismatch occurs, a `DataPoisonError<T>` is
+    /// returns `Ok(None)`.
+    ///
+    /// # Errors
+    ///
+    /// - If a checksum mismatch occurs, a `DataPoisonError<T>` is
     /// returned, in which you can get the underlying deserialized objects via the
     /// method `into_inner()`.
+    ///
+    /// - `DatabaseError<T>::WrongDataVersion` error occurs if the file you are accessing
+    /// is created by a different version of this crate that uses a different file
+    /// format.
+    ///
+    /// - `bincode::Error` occurs if the deserializer fails to deserialize bytes from
+    /// the file to your requested object. In that case, the most probable reason
+    /// is that the data in that file stores some other data type and you are
+    /// attempting to deserialize it to the wrong data type.
+    ///
+    /// - The usual `std::io::Error` such as `ErrorKind::UnexpectedEof` if the file
+    /// that is being accessed is malformed and there are no more bytes to be read
+    /// when the method is expecting more data.
     pub fn load(&mut self) -> Result<Option<Vec<T>>, DatabaseError<T>> {
         let mut buf = Vec::new();
         self.file.read_to_end(&mut buf)?;
@@ -187,6 +207,15 @@ where
 
     /// Writes the provided serializable objects to disk. If no file is found,
     /// a new file will be created and written to.
+    ///
+    /// # Errors
+    ///
+    /// - `DatabaseError<T>::DataTooLarge` occurs when an object you are inserting
+    /// takes up more space than `u32::MAX` bytes. In that case, seek help.
+    ///
+    /// - The usual `std::io::Error` such as `ErrorKind::UnexpectedEof` if the file
+    /// that is being accessed is malformed and there are no more bytes to be read
+    /// when the method is expecting more data.
     pub fn write(&mut self, data: &[T]) -> Result<(), DatabaseError<T>> {
         let buf = Self::vec_to_binary(data)?;
         self.file.write_all(&buf)?;
