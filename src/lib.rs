@@ -2,7 +2,7 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-    fs::OpenOptions,
+    fs::{File, OpenOptions},
     io::{Cursor, ErrorKind, Read, Write},
     path::PathBuf,
 };
@@ -22,8 +22,6 @@ pub enum DatabaseError<T> {
     SerdeError(#[from] bincode::Error),
     #[error("wrong data version: expected {DATA_VERSION}, found {0}")]
     WrongDataVersion(u32),
-    #[error("empty file provided")]
-    EmptyFile,
 }
 
 #[derive(Error, Debug)]
@@ -53,7 +51,7 @@ const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
 #[derive(Debug)]
 pub struct Client<T: Serialize + DeserializeOwned> {
-    path: PathBuf,
+    file: File,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -61,12 +59,17 @@ impl<T> Client<T>
 where
     T: Serialize + DeserializeOwned,
 {
-    #[must_use]
-    pub fn new(path: PathBuf) -> Self {
-        Self {
-            path,
+    pub fn new(path: PathBuf) -> Result<Self, DatabaseError<T>> {
+        let file = OpenOptions::new()
+            .read(true)
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&path)?;
+        Ok(Self {
+            file,
             _phantom: std::marker::PhantomData::default(),
-        }
+        })
     }
 
     fn validate_data_scheme<R: Read>(f: &mut R) -> Result<(), DatabaseError<T>> {
@@ -77,21 +80,12 @@ where
         Ok(())
     }
 
-    pub fn load(&self) -> Result<Option<Vec<T>>, DatabaseError<T>> {
-        let file = OpenOptions::new().read(true).open(&self.path);
-        let mut file = match file {
-            Ok(f) => f,
-            Err(e) if e.kind() == ErrorKind::NotFound => {
-                return Ok(None);
-            }
-            Err(e) => return Err(DatabaseError::Io(e)),
-        };
+    pub fn load(&mut self) -> Result<Option<Vec<T>>, DatabaseError<T>> {
         let mut buf = Vec::new();
-        file.read_to_end(&mut buf)?;
+        self.file.read_to_end(&mut buf)?;
         if buf.is_empty() {
-            return Err(DatabaseError::EmptyFile);
+            return Ok(None);
         }
-        drop(file);
         let result = Self::binary_to_vec(buf)?;
         Ok(Some(result))
     }
@@ -109,14 +103,9 @@ where
         Ok(data)
     }
 
-    pub fn write(&self, data: Vec<T>) -> Result<(), DatabaseError<T>> {
+    pub fn write(&mut self, data: Vec<T>) -> Result<(), DatabaseError<T>> {
         let buf = Self::vec_to_binary(data)?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&self.path)?;
-        file.write_all(&buf)?;
+        self.file.write_all(&buf)?;
         Ok(())
     }
 
@@ -202,7 +191,6 @@ impl<T> DataPoisonError<T> {
 mod tests {
     use crate::{Checksum, Client, DataPoisonError};
     use serde_derive::{Deserialize, Serialize};
-    use std::path::PathBuf;
 
     #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
     struct Test {
@@ -242,13 +230,5 @@ mod tests {
         assert_eq!(&test_messages, error.get_ref());
         assert_eq!(&test_messages, error.get_mut());
         assert_eq!(test_messages, error.into_inner());
-    }
-
-    #[test]
-    fn opening_file() {
-        let fake_path = PathBuf::from("test.pdc");
-        let test_client: Client<Test> = Client::new(fake_path);
-        let result = test_client.load().unwrap();
-        assert_eq!(result, None);
     }
 }
