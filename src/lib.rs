@@ -63,7 +63,7 @@ use thiserror::Error;
 
 const DATA_VERSION: u32 = 1;
 
-/// This is the main error type for `pdc`.
+/// This is the main error type of this crate.
 #[derive(Error, Debug)]
 pub enum DatabaseError<T> {
     /// This returns `std::io::Error`
