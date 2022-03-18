@@ -242,7 +242,9 @@ mod tests {
         };
         let messages = vec![test1, test2, test3];
         let checksum = Checksum::new(23, 45);
-        let error = DataPoisonError::new(messages.clone(), checksum);
+        let mut error = DataPoisonError::new(messages.clone(), checksum);
+        assert_eq!(&messages, error.get_ref());
+        assert_eq!(&messages, error.get_mut());
         assert_eq!(messages, error.into_inner());
     }
 
