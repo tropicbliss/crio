@@ -59,13 +59,14 @@ impl<T> Client<T>
 where
     T: Serialize + DeserializeOwned,
 {
-    pub fn new(path: PathBuf) -> Result<Self, DatabaseError<T>> {
+    pub fn new(mut path: PathBuf) -> Result<Self, DatabaseError<T>> {
+        path.set_extension("pdc");
         let file = OpenOptions::new()
             .read(true)
             .create(true)
             .write(true)
             .truncate(true)
-            .open(&path)?;
+            .open(path)?;
         Ok(Self {
             file,
             _phantom: std::marker::PhantomData::default(),
