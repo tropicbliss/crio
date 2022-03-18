@@ -1,6 +1,6 @@
 # Persistent Data Container
 
-An easy to use API designed to store persistent data of the same type. Integrates well with Serde.
+An easy to use persistent data storage library. Integrates well with Serde.
 
 ## Usage
 
