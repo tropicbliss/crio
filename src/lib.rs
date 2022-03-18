@@ -227,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn poisoning_get_inner() {
+    fn poisoning() {
         let test1 = Test {
             id: 1,
             message: "Hello there, you suck".to_string(),
