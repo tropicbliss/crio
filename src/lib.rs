@@ -15,7 +15,7 @@ pub enum DatabaseError<T> {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
-    MismatchedChecksum(DataPoisonError<T>),
+    MismatchedChecksum(#[from] DataPoisonError<T>),
     #[error("inserted data too large, object of {0} bytes > u32::MAX")]
     DataTooLarge(usize),
     #[error(transparent)]
