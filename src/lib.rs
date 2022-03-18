@@ -4,10 +4,12 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::{
     borrow::Borrow,
     fs::OpenOptions,
-    io::{self, BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write},
+    io::{self, BufReader, BufWriter, Cursor, ErrorKind, Read, Seek, SeekFrom, Write},
     path::PathBuf,
 };
 use thiserror::Error;
+
+const DATA_VERSION: u32 = 1;
 
 #[derive(Error, Debug)]
 pub enum DatabaseError<T> {
@@ -19,6 +21,8 @@ pub enum DatabaseError<T> {
     DataTooLarge(usize),
     #[error(transparent)]
     SerdeError(#[from] bincode::Error),
+    #[error("wrong data version: expected {DATA_VERSION}, found {0}")]
+    WrongDataVersion(u32),
 }
 
 #[derive(Error, Debug)]
@@ -55,20 +59,36 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(path: PathBuf) -> Self {
+    pub fn new<T: AsRef<str>>(db: T) -> Self {
+        let mut path = PathBuf::new();
+        path.push(db.as_ref());
+        path.set_extension("cdb");
         Self { path }
+    }
+
+    fn validate_data_scheme<R: Read, T>(f: &mut R) -> Result<(), DatabaseError<T>> {
+        let saved_version = f.read_u32::<LittleEndian>()?;
+        if saved_version != DATA_VERSION {
+            return Err(DatabaseError::WrongDataVersion(saved_version));
+        }
+        Ok(())
     }
 
     pub fn load<T>(self) -> Result<Collection<T>, DatabaseError<T>> {
         let mut is_corrupted = None;
-        let file = OpenOptions::new()
-            .read(true)
-            .create(true)
-            .open(&self.path)?;
+        let file = OpenOptions::new().read(true).open(&self.path);
+        let file = match file {
+            Ok(f) => f,
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                return Ok(Collection::new(Vec::new(), self.path, 0));
+            }
+            Err(e) => return Err(DatabaseError::Io(e)),
+        };
         let mut f = BufReader::new(file);
         let mut buf = Vec::new();
         f.read_to_end(&mut buf)?;
         f.seek(SeekFrom::Start(0))?;
+        Self::validate_data_scheme(&mut f)?;
         let mut count = 0;
         loop {
             let raw_doc = Self::process_document(&mut f);
@@ -136,9 +156,11 @@ impl<T> Collection<T> {
         let file = OpenOptions::new()
             .write(true)
             .truncate(true)
+            .create(true)
             .open(&self.db_path)?;
         let mut f = BufWriter::new(file);
         let mut readable = Cursor::new(self.buffer.as_slice());
+        f.write_u32::<LittleEndian>(DATA_VERSION)?;
         loop {
             let current_position = readable.seek(SeekFrom::Current(0))?;
             let raw_data = Self::flush_inner(&mut readable);
