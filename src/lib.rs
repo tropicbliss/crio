@@ -76,7 +76,6 @@ where
     }
 
     pub fn load(&self) -> Result<Option<Vec<T>>, DatabaseError<T>> {
-        let mut is_corrupted = None;
         let file = OpenOptions::new().read(true).open(&self.path);
         let mut file = match file {
             Ok(f) => f,
@@ -88,7 +87,37 @@ where
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)?;
         drop(file);
-        let mut f = Cursor::new(buf);
+        let result = Self::binary_to_vec(buf)?;
+        Ok(Some(result))
+    }
+
+    fn process_document<R: Read>(f: &mut R) -> Result<Vec<u8>, InnerDatabaseError> {
+        let saved_checksum = f.read_u32::<LittleEndian>()?;
+        let data_len = f.read_u32::<LittleEndian>()?;
+        let mut data = Vec::with_capacity(data_len as usize);
+        f.take(u64::from(data_len)).read_to_end(&mut data)?;
+        let expected_checksum = CRC.checksum(&data);
+        if expected_checksum != saved_checksum {
+            let checksum = Checksum::new(saved_checksum, expected_checksum);
+            return Err(InnerDatabaseError::MismatchedChecksum(checksum, data));
+        }
+        Ok(data)
+    }
+
+    pub fn write(&self, data: Vec<T>) -> Result<(), DatabaseError<T>> {
+        let buf = Self::vec_to_binary(data)?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&self.path)?;
+        file.write_all(&buf)?;
+        Ok(())
+    }
+
+    fn binary_to_vec(raw_data: Vec<u8>) -> Result<Vec<T>, DatabaseError<T>> {
+        let mut is_corrupted = None;
+        let mut f = Cursor::new(raw_data);
         Self::validate_data_scheme(&mut f)?;
         let mut result = Vec::new();
         loop {
@@ -113,23 +142,10 @@ where
             let error = DataPoisonError::new(result, checksum_data);
             return Err(DatabaseError::MismatchedChecksum(error));
         }
-        Ok(Some(result))
+        Ok(result)
     }
 
-    fn process_document<R: Read>(f: &mut R) -> Result<Vec<u8>, InnerDatabaseError> {
-        let saved_checksum = f.read_u32::<LittleEndian>()?;
-        let data_len = f.read_u32::<LittleEndian>()?;
-        let mut data = Vec::with_capacity(data_len as usize);
-        f.take(u64::from(data_len)).read_to_end(&mut data)?;
-        let expected_checksum = CRC.checksum(&data);
-        if expected_checksum != saved_checksum {
-            let checksum = Checksum::new(saved_checksum, expected_checksum);
-            return Err(InnerDatabaseError::MismatchedChecksum(checksum, data));
-        }
-        Ok(data)
-    }
-
-    pub fn write(&self, data: Vec<T>) -> Result<(), DatabaseError<T>> {
+    fn vec_to_binary(data: Vec<T>) -> Result<Vec<u8>, DatabaseError<T>> {
         let mut buf = Cursor::new(Vec::new());
         buf.write_u32::<LittleEndian>(DATA_VERSION)?;
         for document in data {
@@ -143,13 +159,7 @@ where
             buf.write_u32::<LittleEndian>(data_len as u32)?;
             buf.write_all(&raw_data)?;
         }
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&self.path)?;
-        file.write_all(buf.get_ref())?;
-        Ok(())
+        Ok(buf.into_inner())
     }
 }
 
