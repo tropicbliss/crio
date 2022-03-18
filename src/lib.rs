@@ -38,7 +38,7 @@
 //!     message: "You both suck".to_string(),
 //! };
 //! let messages = vec![msg1, msg2, msg3];
-//! let path = PathBuf::new("messages.pdc");
+//! let path = PathBuf::new("messages.crf");
 //! let client: Client<Message> = Client::new(path)?; // If no file is found, a new empty file is created
 //! client.write(messages)?; // If no file is found, a new file is created and then written to
 //! let messages = client.load()?;
@@ -74,18 +74,18 @@ pub enum DatabaseError<T> {
     /// method.
     #[error(transparent)]
     MismatchedChecksum(#[from] DataPoisonError<T>),
-    /// `pdc` can only store an object that takes up `u32::MAX` bytes of space. If you run
+    /// `crio` can only store an object that takes up `u32::MAX` bytes of space. If you run
     /// into this error you should consider some other library.
     #[error("inserted data too large, object of {0} bytes > u32::MAX")]
     DataTooLarge(usize),
     /// Serialization/deserialization error for an object.
     #[error(transparent)]
     SerdeError(#[from] bincode::Error),
-    /// Each version of `pdc` has its own data version. The data format should remain stable
+    /// Each version of `crio` has its own data version. The data format should remain stable
     /// in perpetuity unless some unforseen circumstances arises. In that case, the data
-    /// version is incremented by 1. The version is stored in each `.pdc` file and if the
-    /// data version in file does not match the data version of the current version of `pdc`,
-    /// this error occurs, in which case, you should change the version of `pdc` you are using
+    /// version is incremented by 1. The version is stored in each `.crf` file and if the
+    /// data version in file does not match the data version of the current version of `crio`,
+    /// this error occurs, in which case, you should change the version of `crio` you are using
     /// for your crate to match the data version of the file you are accessing. Such major
     /// changes would be documented in the README.
     #[error("wrong data version: expected {DATA_VERSION}, found {0}")]
@@ -133,14 +133,14 @@ where
     /// Creates a new client object. It opens a file if a file with the same name exists or
     /// creates a new file if it doesn't exist.
     ///
-    /// *NOTE*: This methods automatically appends a `.pdc` file extension to your path if
+    /// *NOTE*: This methods automatically appends a `.crf` file extension to your path if
     /// the extension is not included in the `PathBuf` passed to this method.
     ///
     /// # Errors
     ///
     /// - The usual `std::io::Error` if it fails to open or create a new file.
     pub fn new(mut path: PathBuf) -> Result<Self, DatabaseError<T>> {
-        path.set_extension("pdc");
+        path.set_extension("crf");
         let file = OpenOptions::new()
             .read(true)
             .create(true)
@@ -271,7 +271,7 @@ where
 }
 
 /// This errors occurs due to a checksum mismatch. Thus it is important to backup your
-/// `.pdc` files periodically to prevent data loss. However, you can still get the underlying
+/// `.crf` files periodically to prevent data loss. However, you can still get the underlying
 /// objects if you are sure only one or two objects are malformed via the `into_inner()` method
 /// or its equivalents, in which case count your lucky stars as `serde` is still able to
 /// deserialize your objects, or that the saved checksum is the one that is corrupted instead
