@@ -31,6 +31,6 @@ let messages = client.load()?;
 if let Some(data) = messages {
     println!("Here are your messages: {:?}", data);
 } else {
-    panic!("File not found. Loading an empty file will cause an UnexpectedEOF error. You can only write");
+    panic!("File not found");
 }
 ```

@@ -22,6 +22,8 @@ pub enum DatabaseError<T> {
     SerdeError(#[from] bincode::Error),
     #[error("wrong data version: expected {DATA_VERSION}, found {0}")]
     WrongDataVersion(u32),
+    #[error("empty file provided")]
+    EmptyFile,
 }
 
 #[derive(Error, Debug)]
@@ -86,6 +88,9 @@ where
         };
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)?;
+        if buf.is_empty() {
+            return Err(DatabaseError::EmptyFile);
+        }
         drop(file);
         let result = Self::binary_to_vec(buf)?;
         Ok(Some(result))
