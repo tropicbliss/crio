@@ -1,10 +1,9 @@
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt};
 use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
-    borrow::Borrow,
     fs::OpenOptions,
-    io::{self, BufReader, BufWriter, Cursor, ErrorKind, Read, Seek, SeekFrom, Write},
+    io::{self, Cursor, ErrorKind, Read},
     path::PathBuf,
 };
 use thiserror::Error;
@@ -30,10 +29,7 @@ enum InnerDatabaseError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("you should not be able to see this error")]
-    MismatchedChecksum {
-        saved_checksum: u32,
-        expected_checksum: u32,
-    },
+    MismatchedChecksum(Checksum, Vec<u8>),
 }
 
 #[derive(Debug)]
@@ -59,10 +55,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new<T: AsRef<str>>(db: T) -> Self {
-        let mut path = PathBuf::new();
-        path.push(db.as_ref());
-        path.set_extension("cdb");
+    pub fn new(path: PathBuf) -> Self {
         Self { path }
     }
 
@@ -74,279 +67,88 @@ impl Client {
         Ok(())
     }
 
-    pub fn load<T>(self) -> Result<Collection<T>, DatabaseError<T>> {
+    pub fn load<T: DeserializeOwned>(self) -> Result<Option<Vec<T>>, DatabaseError<T>> {
         let mut is_corrupted = None;
         let file = OpenOptions::new().read(true).open(&self.path);
-        let file = match file {
+        let mut file = match file {
             Ok(f) => f,
             Err(e) if e.kind() == ErrorKind::NotFound => {
-                return Ok(Collection::new(Vec::new(), self.path, 0));
+                return Ok(None);
             }
             Err(e) => return Err(DatabaseError::Io(e)),
         };
-        let mut f = BufReader::new(file);
         let mut buf = Vec::new();
-        f.read_to_end(&mut buf)?;
-        f.seek(SeekFrom::Start(0))?;
+        file.read_to_end(&mut buf)?;
+        let mut f = Cursor::new(buf);
         Self::validate_data_scheme(&mut f)?;
-        let mut count = 0;
+        let mut result = Vec::new();
         loop {
             let raw_doc = Self::process_document(&mut f);
-            if let Err(err) = raw_doc {
-                match err {
+            let raw_doc = match raw_doc {
+                Ok(d) => d,
+                Err(e) => match e {
                     InnerDatabaseError::Io(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
                         break;
                     }
-                    InnerDatabaseError::MismatchedChecksum {
-                        saved_checksum: s,
-                        expected_checksum: e,
-                    } => {
-                        is_corrupted = Some(Checksum::new(s, e));
+                    InnerDatabaseError::MismatchedChecksum(checksum, data) => {
+                        is_corrupted = Some(checksum);
+                        data
                     }
                     InnerDatabaseError::Io(e) => return Err(DatabaseError::Io(e)),
-                }
-            }
-            count += 1;
+                },
+            };
+            let data = bincode::deserialize(&raw_doc)?;
+            result.push(data);
         }
-        let collection = Collection::new(buf, self.path, count);
         if let Some(checksum_data) = is_corrupted {
-            let error = DataPoisonError::new(collection, checksum_data);
+            let error = DataPoisonError::new(result, checksum_data);
             return Err(DatabaseError::MismatchedChecksum(error));
         }
-        Ok(collection)
+        Ok(Some(result))
     }
 
-    fn process_document<R: Read>(f: &mut R) -> Result<(), InnerDatabaseError> {
+    fn process_document<R: Read>(f: &mut R) -> Result<Vec<u8>, InnerDatabaseError> {
         let saved_checksum = f.read_u32::<LittleEndian>()?;
         let data_len = f.read_u32::<LittleEndian>()?;
         let mut data = Vec::with_capacity(data_len as usize);
         f.take(u64::from(data_len)).read_to_end(&mut data)?;
         let checksum = CRC.checksum(&data);
         if checksum != saved_checksum {
-            return Err(InnerDatabaseError::MismatchedChecksum {
-                saved_checksum: checksum,
-                expected_checksum: saved_checksum,
-            });
+            let checksum = Checksum::new(saved_checksum, checksum);
+            return Err(InnerDatabaseError::MismatchedChecksum(checksum, data));
         }
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct Collection<T> {
-    buffer: Vec<u8>,
-    db_path: PathBuf,
-    delete_pos: Vec<u64>,
-    length: usize,
-    _phantom: std::marker::PhantomData<T>,
-}
-
-impl<T> Collection<T> {
-    fn new(buffer: Vec<u8>, path: PathBuf, count: usize) -> Self {
-        Self {
-            buffer,
-            db_path: path,
-            delete_pos: Vec::new(),
-            length: count,
-            _phantom: std::marker::PhantomData::default(),
-        }
-    }
-
-    pub fn flush(&mut self) -> Result<(), DatabaseError<T>> {
-        let file = OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .create(true)
-            .open(&self.db_path)?;
-        let mut f = BufWriter::new(file);
-        let mut readable = Cursor::new(self.buffer.as_slice());
-        f.write_u32::<LittleEndian>(DATA_VERSION)?;
-        loop {
-            let current_position = readable.seek(SeekFrom::Current(0))?;
-            let raw_data = Self::flush_inner(&mut readable);
-            let raw_data = match raw_data {
-                Ok(d) => d,
-                Err(err) => match err {
-                    DatabaseError::Io(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
-                        break;
-                    }
-                    _ => return Err(err),
-                },
-            };
-            if !self.delete_pos.contains(&current_position) {
-                f.write_all(&raw_data)?;
-            }
-        }
-        f.flush()?;
-        Ok(())
-    }
-
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.length
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.length == 0
-    }
-
-    fn insert_inner(&mut self, encoded: &[u8]) -> Result<(), DatabaseError<T>> {
-        let data_len = encoded.len();
-        if data_len > u32::MAX as usize {
-            return Err(DatabaseError::DataTooLarge(data_len));
-        }
-        let checksum = CRC.checksum(encoded);
-        self.buffer.write_u32::<LittleEndian>(checksum)?;
-        self.buffer.write_u32::<LittleEndian>(data_len as u32)?;
-        self.buffer.write_all(encoded)?;
-        Ok(())
-    }
-
-    fn get_inner<R: Read>(f: &mut R) -> Result<Vec<u8>, DatabaseError<T>> {
-        f.read_u32::<LittleEndian>()?;
-        let data_len = f.read_u32::<LittleEndian>()?;
-        let mut data = Vec::with_capacity(data_len as usize);
-        f.take(u64::from(data_len)).read_to_end(&mut data)?;
         Ok(data)
     }
 
-    fn flush_inner<R: Read>(f: &mut R) -> Result<Vec<u8>, DatabaseError<T>> {
-        let checksum = f.read_u32::<LittleEndian>()?;
-        let data_len = f.read_u32::<LittleEndian>()?;
-        let mut data = Vec::with_capacity(data_len as usize + 8);
-        data.write_u32::<LittleEndian>(checksum)?;
-        data.write_u32::<LittleEndian>(data_len)?;
-        f.take(u64::from(data_len)).read_to_end(&mut data)?;
-        Ok(data)
-    }
-}
-
-impl<T> Collection<T>
-where
-    T: Serialize + DeserializeOwned,
-{
-    pub fn insert(&mut self, item: impl Borrow<T>) -> Result<(), DatabaseError<T>> {
-        let encoded = bincode::serialize(item.borrow())?;
-        self.insert_inner(&encoded)?;
-        self.length += 1;
-        Ok(())
-    }
-
-    pub fn get<F>(&mut self, filter: F) -> Result<Vec<T>, DatabaseError<T>>
-    where
-        F: Fn(&T) -> bool,
-    {
-        let mut readable = self.buffer.as_slice();
-        let mut result = Vec::new();
-        loop {
-            let raw_data = Self::get_inner(&mut readable);
-            let raw_data = match raw_data {
-                Ok(d) => d,
-                Err(err) => match err {
-                    DatabaseError::Io(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
-                        break;
-                    }
-                    _ => return Err(err),
-                },
-            };
-            let data = bincode::deserialize(&raw_data)?;
-            if filter(&data) {
-                result.push(data);
-            }
-        }
-        Ok(result)
-    }
-
-    pub fn update<F, M>(&mut self, filter: F, map: M) -> Result<(), DatabaseError<T>>
-    where
-        F: Fn(&T) -> bool,
-        M: Fn(T) -> T,
-    {
-        let mut readable = Cursor::new(self.buffer.as_slice());
-        let mut transformed_values = Vec::new();
-        loop {
-            let current_position = readable.seek(SeekFrom::Current(0))?;
-            let raw_data = Self::get_inner(&mut readable);
-            let raw_data = match raw_data {
-                Ok(d) => d,
-                Err(err) => match err {
-                    DatabaseError::Io(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
-                        break;
-                    }
-                    _ => return Err(err),
-                },
-            };
-            let data = bincode::deserialize(&raw_data)?;
-            if filter(&data) {
-                self.delete_pos.push(current_position);
-                let transformed_value = map(data);
-                transformed_values.push(transformed_value);
-            }
-        }
-        for value in transformed_values {
-            self.insert(value)?;
-        }
-        Ok(())
-    }
-
-    pub fn delete<F>(&mut self, filter: F) -> Result<(), DatabaseError<T>>
-    where
-        F: Fn(T) -> bool,
-    {
-        let mut readable = Cursor::new(self.buffer.as_slice());
-        loop {
-            let current_position = readable.seek(SeekFrom::Current(0))?;
-            let raw_data = Self::get_inner(&mut readable);
-            let raw_data = match raw_data {
-                Ok(d) => d,
-                Err(err) => match err {
-                    DatabaseError::Io(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
-                        break;
-                    }
-                    _ => return Err(err),
-                },
-            };
-            let data = bincode::deserialize(&raw_data)?;
-            if filter(data) {
-                self.delete_pos.push(current_position);
-                self.length -= 1;
-            }
-        }
-        Ok(())
-    }
-}
-
-impl<T> Drop for Collection<T> {
-    fn drop(&mut self) {
-        let _r = self.flush();
+    pub fn write<T: Serialize>(&self, data: Vec<T>) -> Result<(), DatabaseError<T>> {
+        todo!()
     }
 }
 
 #[derive(Error, Debug)]
 #[error("data corruption encountered ({:08x} != {:08x})", .checksum.saved_checksum, .checksum.expected_checksum)]
 pub struct DataPoisonError<T> {
-    collection: Collection<T>,
+    collection: Vec<T>,
     checksum: Checksum,
 }
 
 impl<T> DataPoisonError<T> {
-    fn new(collection: Collection<T>, checksum: Checksum) -> Self {
+    fn new(collection: Vec<T>, checksum: Checksum) -> Self {
         Self {
             collection,
             checksum,
         }
     }
 
-    pub fn into_inner(self) -> Collection<T> {
+    pub fn into_inner(self) -> Vec<T> {
         self.collection
     }
 
-    pub fn get_ref(&self) -> &Collection<T> {
+    pub fn get_ref(&self) -> &[T] {
         &self.collection
     }
 
-    pub fn get_mut(&mut self) -> &mut Collection<T> {
+    pub fn get_mut(&mut self) -> &mut [T] {
         &mut self.collection
     }
 }
