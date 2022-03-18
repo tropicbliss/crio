@@ -195,10 +195,9 @@ impl<T> DataPoisonError<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use crate::{Checksum, Client, DataPoisonError};
     use serde_derive::{Deserialize, Serialize};
+    use std::path::PathBuf;
 
     #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
     struct Test {
