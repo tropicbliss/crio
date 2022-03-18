@@ -169,7 +169,7 @@ where
 }
 
 #[derive(Error, Debug)]
-#[error("data corruption encountered ({:08x} != {:08x})", .checksum.saved_checksum, .checksum.expected_checksum)]
+#[error("data corruption encountered ({:08x} != {:08x})", .checksum.expected_checksum, .checksum.saved_checksum)]
 pub struct DataPoisonError<T> {
     collection: Vec<T>,
     checksum: Checksum,
