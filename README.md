@@ -26,7 +26,7 @@ let msg3 = Message {
 let messages = vec![msg1, msg2, msg3];
 let path = PathBuf::new("messages.pdc");
 let client: Client<Message> = Client::new(path);
-client.write(messages)?; // If no file is found, a new file is created. TAKE NOTE: When write is called, if there is already a file, it wipes and truncates the file to write new data, instead of appending to it.
+client.write(messages)?; // If no file is found, a new file is created. TAKE NOTE: When write is called, if there is already a file, it wipes and truncates the file to write new data instead of appending to it.
 let messages = client.load()?;
 if let Some(data) = messages {
     println!("Here are your messages: {:?}", data);
