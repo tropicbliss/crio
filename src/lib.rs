@@ -206,8 +206,7 @@ mod tests {
         message: String,
     }
 
-    #[test]
-    fn binary_vec_conversion() {
+    fn generate_test_data() -> Vec<Test> {
         let test1 = Test {
             id: 1,
             message: "Hello there, you suck".to_string(),
@@ -220,32 +219,25 @@ mod tests {
             id: 3,
             message: "You both suck".to_string(),
         };
-        let messages = vec![test1, test2, test3];
-        let binary = Client::vec_to_binary(messages.clone()).unwrap();
+        vec![test1, test2, test3]
+    }
+
+    #[test]
+    fn binary_vec_conversion() {
+        let test_messages = generate_test_data();
+        let binary = Client::vec_to_binary(test_messages.clone()).unwrap();
         let vec: Vec<Test> = Client::binary_to_vec(binary).unwrap();
-        assert_eq!(messages, vec);
+        assert_eq!(test_messages, vec);
     }
 
     #[test]
     fn poisoning() {
-        let test1 = Test {
-            id: 1,
-            message: "Hello there, you suck".to_string(),
-        };
-        let test2 = Test {
-            id: 2,
-            message: "No you".to_string(),
-        };
-        let test3 = Test {
-            id: 3,
-            message: "You both suck".to_string(),
-        };
-        let messages = vec![test1, test2, test3];
+        let test_messages = generate_test_data();
         let checksum = Checksum::new(23, 45);
-        let mut error = DataPoisonError::new(messages.clone(), checksum);
-        assert_eq!(&messages, error.get_ref());
-        assert_eq!(&messages, error.get_mut());
-        assert_eq!(messages, error.into_inner());
+        let mut error = DataPoisonError::new(test_messages.clone(), checksum);
+        assert_eq!(&test_messages, error.get_ref());
+        assert_eq!(&test_messages, error.get_mut());
+        assert_eq!(test_messages, error.into_inner());
     }
 
     #[test]
