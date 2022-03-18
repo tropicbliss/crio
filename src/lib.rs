@@ -75,7 +75,7 @@ where
         Ok(())
     }
 
-    pub fn load(self) -> Result<Option<Vec<T>>, DatabaseError<T>> {
+    pub fn load(&self) -> Result<Option<Vec<T>>, DatabaseError<T>> {
         let mut is_corrupted = None;
         let file = OpenOptions::new().read(true).open(&self.path);
         let mut file = match file {
