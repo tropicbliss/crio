@@ -18,7 +18,7 @@
 //!
 //! # Examples
 //!
-//! ```no_run
+//! ```ignore
 //! #[derive(Serialize, Deserialize, Debug)]
 //! struct Message {
 //!     id: usize,
