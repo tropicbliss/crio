@@ -1,14 +1,14 @@
 [package]
 name = "crio"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 authors = ["tropicbliss <tropicbliss@protonmail.com>"]
 license = "MIT"
 description = "An easy to use persistent data storage library"
 readme = "README.md"
-documentation = "https://docs.rs/pdc"
-homepage = "https://github.com/tropicbliss/pdc"
-repository = "https://github.com/tropicbliss/pdc"
+documentation = "https://docs.rs/crio"
+homepage = "https://github.com/tropicbliss/crio"
+repository = "https://github.com/tropicbliss/crio"
 keywords = ["storage", "persistent", "data"]
 categories = ["data-structures"]
 
