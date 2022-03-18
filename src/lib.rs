@@ -3,7 +3,7 @@ use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     fs::OpenOptions,
-    io::{self, Cursor, ErrorKind, Read, Write},
+    io::{Cursor, ErrorKind, Read, Write},
     path::PathBuf,
 };
 use thiserror::Error;
@@ -130,7 +130,7 @@ where
             let raw_doc = match raw_doc {
                 Ok(d) => d,
                 Err(e) => match e {
-                    InnerDatabaseError::Io(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                    InnerDatabaseError::Io(err) if err.kind() == ErrorKind::UnexpectedEof => {
                         break;
                     }
                     InnerDatabaseError::MismatchedChecksum(checksum, data) => {
