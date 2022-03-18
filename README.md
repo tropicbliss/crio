@@ -1,6 +1,6 @@
 # Persistent Data Container
 
-An easy to use API designed to store persistent data of the same type even after the program has ended execution.
+An easy to use API designed to store persistent data of the same type. Integrates well with Serde.
 
 ## Usage
 
