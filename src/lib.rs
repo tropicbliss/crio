@@ -1,9 +1,9 @@
-use byteorder::{LittleEndian, ReadBytesExt};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     fs::OpenOptions,
-    io::{self, Cursor, ErrorKind, Read},
+    io::{self, Cursor, ErrorKind, Read, Write},
     path::PathBuf,
 };
 use thiserror::Error;
@@ -55,6 +55,7 @@ pub struct Client {
 }
 
 impl Client {
+    #[must_use]
     pub fn new(path: PathBuf) -> Self {
         Self { path }
     }
@@ -112,15 +113,34 @@ impl Client {
         let data_len = f.read_u32::<LittleEndian>()?;
         let mut data = Vec::with_capacity(data_len as usize);
         f.take(u64::from(data_len)).read_to_end(&mut data)?;
-        let checksum = CRC.checksum(&data);
-        if checksum != saved_checksum {
-            let checksum = Checksum::new(saved_checksum, checksum);
+        let expected_checksum = CRC.checksum(&data);
+        if expected_checksum != saved_checksum {
+            let checksum = Checksum::new(saved_checksum, expected_checksum);
             return Err(InnerDatabaseError::MismatchedChecksum(checksum, data));
         }
         Ok(data)
     }
 
     pub fn write<T: Serialize>(&self, data: Vec<T>) -> Result<(), DatabaseError<T>> {
+        let mut buf = Cursor::new(Vec::new());
+        buf.write_u32::<LittleEndian>(DATA_VERSION)?;
+        for document in data {
+            let raw_data = bincode::serialize(&document)?;
+            let data_len = raw_data.len();
+            if data_len > u32::MAX as usize {
+                return Err(DatabaseError::DataTooLarge(data_len));
+            }
+            let checksum = CRC.checksum(&raw_data);
+            buf.write_u32::<LittleEndian>(checksum)?;
+            buf.write_u32::<LittleEndian>(data_len as u32)?;
+            buf.write_all(&raw_data)?;
+        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&self.path)?;
+        file.write_all(buf.get_ref())?;
         todo!()
     }
 }
@@ -140,10 +160,12 @@ impl<T> DataPoisonError<T> {
         }
     }
 
+    #[must_use]
     pub fn into_inner(self) -> Vec<T> {
         self.collection
     }
 
+    #[must_use]
     pub fn get_ref(&self) -> &[T] {
         &self.collection
     }
