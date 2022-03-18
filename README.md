@@ -1,3 +1,3 @@
-# *crio*
+# Persistent Data Container
 
-A (currently WIP) local DB that would definitely support CRUD and maybe support ACID and whatever jargon. Stay tuned.
+A container designed to store persistent data of the same type even after the program has ended execution.
