@@ -1,5 +1,5 @@
 [package]
-name = "pds"
+name = "pdc"
 version = "0.1.0"
 edition = "2021"
 authors = ["tropicbliss <tropicbliss@protonmail.com>"]
