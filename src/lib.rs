@@ -50,17 +50,24 @@ impl Checksum {
 const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
 #[derive(Debug)]
-pub struct Client {
+pub struct Client<T: Serialize + DeserializeOwned> {
     path: PathBuf,
+    _phantom: std::marker::PhantomData<T>,
 }
 
-impl Client {
+impl<T> Client<T>
+where
+    T: Serialize + DeserializeOwned,
+{
     #[must_use]
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            path,
+            _phantom: std::marker::PhantomData::default(),
+        }
     }
 
-    fn validate_data_scheme<R: Read, T>(f: &mut R) -> Result<(), DatabaseError<T>> {
+    fn validate_data_scheme<R: Read>(f: &mut R) -> Result<(), DatabaseError<T>> {
         let saved_version = f.read_u32::<LittleEndian>()?;
         if saved_version != DATA_VERSION {
             return Err(DatabaseError::WrongDataVersion(saved_version));
@@ -68,7 +75,7 @@ impl Client {
         Ok(())
     }
 
-    pub fn load<T: DeserializeOwned>(self) -> Result<Option<Vec<T>>, DatabaseError<T>> {
+    pub fn load(self) -> Result<Option<Vec<T>>, DatabaseError<T>> {
         let mut is_corrupted = None;
         let file = OpenOptions::new().read(true).open(&self.path);
         let mut file = match file {
@@ -80,6 +87,7 @@ impl Client {
         };
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)?;
+        drop(file);
         let mut f = Cursor::new(buf);
         Self::validate_data_scheme(&mut f)?;
         let mut result = Vec::new();
@@ -121,7 +129,7 @@ impl Client {
         Ok(data)
     }
 
-    pub fn write<T: Serialize>(&self, data: Vec<T>) -> Result<(), DatabaseError<T>> {
+    pub fn write(&self, data: Vec<T>) -> Result<(), DatabaseError<T>> {
         let mut buf = Cursor::new(Vec::new());
         buf.write_u32::<LittleEndian>(DATA_VERSION)?;
         for document in data {
@@ -141,7 +149,7 @@ impl Client {
             .truncate(true)
             .open(&self.path)?;
         file.write_all(buf.get_ref())?;
-        todo!()
+        Ok(())
     }
 }
 
