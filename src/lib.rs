@@ -195,6 +195,8 @@ impl<T> DataPoisonError<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use crate::{Checksum, Client, DataPoisonError};
     use serde_derive::{Deserialize, Serialize};
 
@@ -242,5 +244,13 @@ mod tests {
         let checksum = Checksum::new(23, 45);
         let error = DataPoisonError::new(messages.clone(), checksum);
         assert_eq!(messages, error.into_inner());
+    }
+
+    #[test]
+    fn opening_file() {
+        let fake_path = PathBuf::from("test.pdc");
+        let test_client: Client<Test> = Client::new(fake_path);
+        let result = test_client.load().unwrap();
+        assert_eq!(result, None);
     }
 }
