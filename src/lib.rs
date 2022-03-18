@@ -195,17 +195,17 @@ impl<T> DataPoisonError<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::Client;
+    use crate::{Checksum, Client, DataPoisonError};
     use serde_derive::{Deserialize, Serialize};
 
-    #[test]
-    fn it_works() {
-        #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-        struct Test {
-            id: usize,
-            message: String,
-        }
+    #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+    struct Test {
+        id: usize,
+        message: String,
+    }
 
+    #[test]
+    fn binary_vec_conversion() {
         let test1 = Test {
             id: 1,
             message: "Hello there, you suck".to_string(),
@@ -222,5 +222,25 @@ mod tests {
         let binary = Client::vec_to_binary(messages.clone()).unwrap();
         let vec: Vec<Test> = Client::binary_to_vec(binary).unwrap();
         assert_eq!(messages, vec);
+    }
+
+    #[test]
+    fn poisoning_get_inner() {
+        let test1 = Test {
+            id: 1,
+            message: "Hello there, you suck".to_string(),
+        };
+        let test2 = Test {
+            id: 2,
+            message: "No you".to_string(),
+        };
+        let test3 = Test {
+            id: 3,
+            message: "You both suck".to_string(),
+        };
+        let messages = vec![test1, test2, test3];
+        let checksum = Checksum::new(23, 45);
+        let error = DataPoisonError::new(messages.clone(), checksum);
+        assert_eq!(messages, error.into_inner());
     }
 }
