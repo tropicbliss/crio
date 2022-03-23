@@ -58,7 +58,6 @@ use std::{
     fs::{File, OpenOptions},
     io::{Cursor, ErrorKind, Read, Seek, SeekFrom, Write},
     path::PathBuf,
-    slice::from_ref,
 };
 use thiserror::Error;
 
@@ -305,7 +304,7 @@ where
     /// that is being accessed is malformed and there are no more bytes to be read
     /// when the method is expecting more data.
     pub fn write(&mut self, data: &T) -> Result<(), DatabaseError<T>> {
-        let buf = vec_to_binary(from_ref(data))?;
+        let buf = vec_to_binary(std::array::from_ref(data))?;
         self.file.write_all(&buf)?;
         Ok(())
     }
