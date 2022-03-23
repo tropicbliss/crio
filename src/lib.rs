@@ -56,8 +56,9 @@ use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     fs::{File, OpenOptions},
-    io::{Cursor, ErrorKind, Read, Write},
+    io::{Cursor, ErrorKind, Read, Seek, SeekFrom, Write},
     path::PathBuf,
+    slice::from_ref,
 };
 use thiserror::Error;
 
@@ -118,8 +119,10 @@ impl Checksum {
 const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
 /// An object that is responsible for handling IO operations with regards to file
-/// opening/closing/writing as well as serialization and deserialization. The
-/// main data type of this crate.
+/// opening/closing/writing as well as serialization and deserialization.
+///
+/// **NOTE**: If you would like to append data to the file instead, check out
+/// `AppendClient<T>`.
 #[derive(Debug)]
 pub struct Client<T: Serialize + DeserializeOwned> {
     file: File,
@@ -133,7 +136,7 @@ where
     /// Creates a new client object. It opens a file if a file with the same name exists or
     /// creates a new file if it doesn't exist.
     ///
-    /// *NOTE*: This methods automatically appends a `.crf` file extension to your path if
+    /// **NOTE**: This methods automatically appends a `.crf` file extension to your path if
     /// the extension is not included in the `PathBuf` passed to this method.
     ///
     /// # Errors
@@ -151,14 +154,6 @@ where
             file,
             _phantom: std::marker::PhantomData::default(),
         })
-    }
-
-    fn validate_data_scheme<R: Read>(f: &mut R) -> Result<(), DatabaseError<T>> {
-        let saved_version = f.read_u32::<LittleEndian>()?;
-        if saved_version != DATA_VERSION {
-            return Err(DatabaseError::WrongDataVersion(saved_version));
-        }
-        Ok(())
     }
 
     /// Returns a vector of the deserialized object. If the file is empty, this method
@@ -188,25 +183,16 @@ where
         if buf.is_empty() {
             return Ok(None);
         }
-        let result = Self::binary_to_vec(buf)?;
+        let result = binary_to_vec(buf)?;
         Ok(Some(result))
-    }
-
-    fn process_document<R: Read>(f: &mut R) -> Result<Vec<u8>, InnerDatabaseError> {
-        let saved_checksum = f.read_u32::<LittleEndian>()?;
-        let data_len = f.read_u32::<LittleEndian>()?;
-        let mut data = Vec::with_capacity(data_len as usize);
-        f.take(u64::from(data_len)).read_to_end(&mut data)?;
-        let expected_checksum = CRC.checksum(&data);
-        if expected_checksum != saved_checksum {
-            let checksum = Checksum::new(saved_checksum, expected_checksum);
-            return Err(InnerDatabaseError::MismatchedChecksum(checksum, data));
-        }
-        Ok(data)
     }
 
     /// Writes the provided serializable objects to disk. If no file is found,
     /// a new file will be created and written to.
+    ///
+    /// **NOTE**: Take note that if a file with the same name exists, this method
+    /// overwrites the data in the file with the data you provided. If you merely
+    /// want to append data, use `AppendClient<T>` instead.
     ///
     /// # Errors
     ///
@@ -217,57 +203,180 @@ where
     /// that is being accessed is malformed and there are no more bytes to be read
     /// when the method is expecting more data.
     pub fn write(&mut self, data: &[T]) -> Result<(), DatabaseError<T>> {
-        let buf = Self::vec_to_binary(data)?;
+        let buf = vec_to_binary(data)?;
+        self.file.write_all(&buf)?;
+        Ok(())
+    }
+}
+
+/// This client does the same thing as `Client<T>` with a few notable differences. The `write()`
+/// method merely appends data to an existing file if it exists instead of overwriting the data.
+/// There are also two write methods: `write_many()` which accepts a vector of objects, and
+/// `write()`, which only accepts a single object.
+pub struct AppendClient<T> {
+    file: File,
+    _phantom: std::marker::PhantomData<T>,
+}
+
+impl<T> AppendClient<T>
+where
+    T: Serialize + DeserializeOwned,
+{
+    /// Creates a new client object. It opens a file if a file with the same name exists or
+    /// creates a new file if it doesn't exist.
+    ///
+    /// **NOTE**: This methods automatically appends a `.crf` file extension to your path if
+    /// the extension is not included in the `PathBuf` passed to this method.
+    ///
+    /// # Errors
+    ///
+    /// - The usual `std::io::Error` if it fails to open or create a new file.
+    pub fn new(mut path: PathBuf) -> Result<Self, DatabaseError<T>> {
+        path.set_extension("crf");
+        let file = OpenOptions::new()
+            .read(true)
+            .create(true)
+            .append(true)
+            .open(path)?;
+        Ok(Self {
+            file,
+            _phantom: std::marker::PhantomData::default(),
+        })
+    }
+
+    /// Returns a vector of the deserialized object. If the file is empty, this method
+    /// returns `Ok(None)`.
+    ///
+    /// # Errors
+    ///
+    /// - If a checksum mismatch occurs, a `DataPoisonError<T>` is
+    /// returned, in which you can get the underlying deserialized objects via the
+    /// method `into_inner()`.
+    ///
+    /// - `DatabaseError<T>::WrongDataVersion` error occurs if the file you are accessing
+    /// is created by a different version of this crate that uses a different file
+    /// format.
+    ///
+    /// - `bincode::Error` occurs if the deserializer fails to deserialize bytes from
+    /// the file to your requested object. In that case, the most probable reason
+    /// is that the data in that file stores some other data type and you are
+    /// attempting to deserialize it to the wrong data type.
+    ///
+    /// - The usual `std::io::Error` such as `ErrorKind::UnexpectedEof` if the file
+    /// that is being accessed is malformed and there are no more bytes to be read
+    /// when the method is expecting more data.
+    pub fn load(&mut self) -> Result<Option<Vec<T>>, DatabaseError<T>> {
+        let mut buf = Vec::new();
+        self.file.seek(SeekFrom::Start(0))?;
+        self.file.read_to_end(&mut buf)?;
+        if buf.is_empty() {
+            return Ok(None);
+        }
+        let result = binary_to_vec(buf)?;
+        Ok(Some(result))
+    }
+
+    /// Writes the provided serializable objects to disk without overwriting any of the previous data. If no file is found,
+    /// a new file will be created and written to.
+    ///
+    /// # Errors
+    ///
+    /// - `DatabaseError<T>::DataTooLarge` occurs when an object you are inserting
+    /// takes up more space than `u32::MAX` bytes. In that case, seek help.
+    ///
+    /// - The usual `std::io::Error` such as `ErrorKind::UnexpectedEof` if the file
+    /// that is being accessed is malformed and there are no more bytes to be read
+    /// when the method is expecting more data.
+    pub fn write_many(&mut self, data: &[T]) -> Result<(), DatabaseError<T>> {
+        let buf = vec_to_binary(data)?;
         self.file.write_all(&buf)?;
         Ok(())
     }
 
-    fn binary_to_vec(raw_data: Vec<u8>) -> Result<Vec<T>, DatabaseError<T>> {
-        let mut is_corrupted = None;
-        let mut f = Cursor::new(raw_data);
-        Self::validate_data_scheme(&mut f)?;
-        let mut result = Vec::new();
-        loop {
-            let raw_doc = Self::process_document(&mut f);
-            let raw_doc = match raw_doc {
-                Ok(d) => d,
-                Err(e) => match e {
-                    InnerDatabaseError::Io(err) if err.kind() == ErrorKind::UnexpectedEof => {
-                        break;
-                    }
-                    InnerDatabaseError::MismatchedChecksum(checksum, data) => {
-                        is_corrupted = Some(checksum);
-                        data
-                    }
-                    InnerDatabaseError::Io(e) => return Err(DatabaseError::Io(e)),
-                },
-            };
-            let data = bincode::deserialize(&raw_doc)?;
-            result.push(data);
-        }
-        if let Some(checksum_data) = is_corrupted {
-            let error = DataPoisonError::new(result, checksum_data);
-            return Err(DatabaseError::MismatchedChecksum(error));
-        }
-        Ok(result)
+    /// Writes the provided serializable object to disk without overwriting any of the previous data. If no file is found,
+    /// a new file will be created and written to.
+    ///
+    /// # Errors
+    ///
+    /// - `DatabaseError<T>::DataTooLarge` occurs when an object you are inserting
+    /// takes up more space than `u32::MAX` bytes. In that case, seek help.
+    ///
+    /// - The usual `std::io::Error` such as `ErrorKind::UnexpectedEof` if the file
+    /// that is being accessed is malformed and there are no more bytes to be read
+    /// when the method is expecting more data.
+    pub fn write(&mut self, data: &T) -> Result<(), DatabaseError<T>> {
+        let buf = vec_to_binary(from_ref(data))?;
+        self.file.write_all(&buf)?;
+        Ok(())
     }
+}
 
-    fn vec_to_binary(data: &[T]) -> Result<Vec<u8>, DatabaseError<T>> {
-        let mut buf = Cursor::new(Vec::new());
-        buf.write_u32::<LittleEndian>(DATA_VERSION)?;
-        for document in data {
-            let raw_data = bincode::serialize(&document)?;
-            let data_len = raw_data.len();
-            if data_len > u32::MAX as usize {
-                return Err(DatabaseError::DataTooLarge(data_len));
-            }
-            let checksum = CRC.checksum(&raw_data);
-            buf.write_u32::<LittleEndian>(checksum)?;
-            buf.write_u32::<LittleEndian>(data_len as u32)?;
-            buf.write_all(&raw_data)?;
-        }
-        Ok(buf.into_inner())
+fn binary_to_vec<T: DeserializeOwned>(raw_data: Vec<u8>) -> Result<Vec<T>, DatabaseError<T>> {
+    let mut is_corrupted = None;
+    let mut f = Cursor::new(raw_data);
+    validate_data_scheme(&mut f)?;
+    let mut result = Vec::new();
+    loop {
+        let raw_doc = process_document(&mut f);
+        let raw_doc = match raw_doc {
+            Ok(d) => d,
+            Err(e) => match e {
+                InnerDatabaseError::Io(err) if err.kind() == ErrorKind::UnexpectedEof => {
+                    break;
+                }
+                InnerDatabaseError::MismatchedChecksum(checksum, data) => {
+                    is_corrupted = Some(checksum);
+                    data
+                }
+                InnerDatabaseError::Io(e) => return Err(DatabaseError::Io(e)),
+            },
+        };
+        let data = bincode::deserialize(&raw_doc)?;
+        result.push(data);
     }
+    if let Some(checksum_data) = is_corrupted {
+        let error = DataPoisonError::new(result, checksum_data);
+        return Err(DatabaseError::MismatchedChecksum(error));
+    }
+    Ok(result)
+}
+
+fn validate_data_scheme<R: Read, T>(f: &mut R) -> Result<(), DatabaseError<T>> {
+    let saved_version = f.read_u32::<LittleEndian>()?;
+    if saved_version != DATA_VERSION {
+        return Err(DatabaseError::WrongDataVersion(saved_version));
+    }
+    Ok(())
+}
+
+fn process_document<R: Read>(f: &mut R) -> Result<Vec<u8>, InnerDatabaseError> {
+    let saved_checksum = f.read_u32::<LittleEndian>()?;
+    let data_len = f.read_u32::<LittleEndian>()?;
+    let mut data = Vec::with_capacity(data_len as usize);
+    f.take(u64::from(data_len)).read_to_end(&mut data)?;
+    let expected_checksum = CRC.checksum(&data);
+    if expected_checksum != saved_checksum {
+        let checksum = Checksum::new(saved_checksum, expected_checksum);
+        return Err(InnerDatabaseError::MismatchedChecksum(checksum, data));
+    }
+    Ok(data)
+}
+
+fn vec_to_binary<T: Serialize>(data: &[T]) -> Result<Vec<u8>, DatabaseError<T>> {
+    let mut buf = Cursor::new(Vec::new());
+    buf.write_u32::<LittleEndian>(DATA_VERSION)?;
+    for document in data {
+        let raw_data = bincode::serialize(&document)?;
+        let data_len = raw_data.len();
+        if data_len > u32::MAX as usize {
+            return Err(DatabaseError::DataTooLarge(data_len));
+        }
+        let checksum = CRC.checksum(&raw_data);
+        buf.write_u32::<LittleEndian>(checksum)?;
+        buf.write_u32::<LittleEndian>(data_len as u32)?;
+        buf.write_all(&raw_data)?;
+    }
+    Ok(buf.into_inner())
 }
 
 /// This errors occurs due to a checksum mismatch. Thus it is important to backup your
@@ -311,7 +420,7 @@ impl<T> DataPoisonError<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Checksum, Client, DataPoisonError};
+    use crate::{binary_to_vec, vec_to_binary, Checksum, DataPoisonError};
     use serde_derive::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -339,8 +448,8 @@ mod tests {
     #[test]
     fn binary_vec_conversion() {
         let test_messages = generate_test_data();
-        let binary = Client::vec_to_binary(&test_messages).unwrap();
-        let vec: Vec<Test> = Client::binary_to_vec(binary).unwrap();
+        let binary = vec_to_binary(&test_messages).unwrap();
+        let vec: Vec<Test> = binary_to_vec(binary).unwrap();
         assert_eq!(test_messages, vec);
     }
 
