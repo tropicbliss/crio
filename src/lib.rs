@@ -201,6 +201,8 @@ where
     /// - The usual `std::io::Error` such as `ErrorKind::UnexpectedEof` if the file
     /// that is being accessed is malformed and there are no more bytes to be read
     /// when the method is expecting more data.
+    ///
+    /// - Serialization errors when the data provided fails to serialize for some reason.
     pub fn write(&mut self, data: &[T]) -> Result<(), DatabaseError<T>> {
         let buf = vec_to_binary(data)?;
         self.file.write_all(&buf)?;
@@ -286,6 +288,8 @@ where
     /// - The usual `std::io::Error` such as `ErrorKind::UnexpectedEof` if the file
     /// that is being accessed is malformed and there are no more bytes to be read
     /// when the method is expecting more data.
+    ///
+    /// - Serialization errors when the data provided fails to serialize for some reason.
     pub fn write_many(&mut self, data: &[T]) -> Result<(), DatabaseError<T>> {
         let buf = vec_to_binary(data)?;
         self.file.write_all(&buf)?;
