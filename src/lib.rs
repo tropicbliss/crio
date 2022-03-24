@@ -212,6 +212,8 @@ where
 
 /// This client does the same thing as `Client<T>` with a few notable differences. The `write()`
 /// method merely appends data to an existing file if it exists instead of overwriting the data.
+/// This allows the user to append data to the file without having to load all the data in the file
+/// into memory.
 /// There are also two write methods: `write_many()` which accepts a vector of objects, and
 /// `write()`, which only accepts a single object.
 pub struct AppendClient<T> {
