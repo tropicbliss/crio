@@ -16,11 +16,11 @@
 //! for this task, such as `sled`:
 //! <https://github.com/spacejam/sled>
 //!
-//! This library is also primarily for my personal use and I simply decided to open-source it just in case
+//! This library is once primarily for my own personal use. I simply decided to open-source it just in case
 //! anyone finds this useful. There are no file headers or data versioning support in the created file,
 //! but the format of the data should remain stable for the forseeable future.
 //!
-//! # Examples
+//! # Example
 //!
 //! ```ignore
 //! #[derive(Serialize, Deserialize, Debug)]
