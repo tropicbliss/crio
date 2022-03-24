@@ -59,7 +59,7 @@ use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     fs::{File, OpenOptions},
-    io::{Cursor, ErrorKind, Read, Seek, SeekFrom, Write},
+    io::{ErrorKind, Read, Seek, SeekFrom, Write},
     path::Path,
 };
 use thiserror::Error;
@@ -218,7 +218,7 @@ where
 
 fn binary_to_vec<T: DeserializeOwned>(raw_data: Vec<u8>) -> Result<Vec<T>, DatabaseError<T>> {
     let mut is_corrupted = None;
-    let mut f = Cursor::new(raw_data);
+    let mut f = raw_data.as_slice();
     let mut result = Vec::new();
     loop {
         let raw_doc = process_document(&mut f);
@@ -259,7 +259,7 @@ fn process_document<R: Read>(f: &mut R) -> Result<Vec<u8>, InnerDatabaseError> {
 }
 
 fn vec_to_binary<T: Serialize>(data: &[T]) -> Result<Vec<u8>, DatabaseError<T>> {
-    let mut buf = Cursor::new(Vec::new());
+    let mut buf = Vec::new();
     for document in data {
         let raw_data = bincode::serialize(&document)?;
         let data_len = raw_data.len();
@@ -271,7 +271,7 @@ fn vec_to_binary<T: Serialize>(data: &[T]) -> Result<Vec<u8>, DatabaseError<T>> 
         buf.write_u32::<LittleEndian>(data_len as u32)?;
         buf.write_all(&raw_data)?;
     }
-    Ok(buf.into_inner())
+    Ok(buf)
 }
 
 /// This error occurs due to a checksum mismatch. Therefore it is important to backup your
