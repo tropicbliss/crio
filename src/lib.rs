@@ -115,7 +115,6 @@ const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 /// An object that is responsible for handling IO operations with regards to file
 /// opening/closing/writing as well as serialization and deserialization.
 /// The main data type of this crate.
-#[derive(Debug)]
 pub struct Client<T: Serialize + DeserializeOwned> {
     file: File,
     _phantom: std::marker::PhantomData<T>,
