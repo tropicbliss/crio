@@ -80,7 +80,7 @@ pub enum DatabaseError<T> {
     MismatchedChecksum(#[from] DataPoisonError<T>),
     /// `crio` can only store an object that takes up `u32::MAX` bytes of space. If you run
     /// into this error you should consider some other library.
-    #[error("inserted data too large")]
+    #[error("inserted data too large: object > u32::MAX")]
     DataTooLarge(#[from] TryFromIntError),
     /// Serialization/deserialization error for an object.
     #[error(transparent)]
