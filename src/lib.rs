@@ -1,3 +1,5 @@
+#![warn(clippy::pedantic)]
+
 //! This crate provides an easy to use API to store persistent data of the same type.
 //!
 //! Any type that is able to be deserialized or serialized using Serde can be stored on disk.
@@ -60,6 +62,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::{
     fs::{File, OpenOptions},
     io::{ErrorKind, Read, Seek, SeekFrom, Write},
+    num::TryFromIntError,
     path::Path,
 };
 use thiserror::Error;
@@ -77,8 +80,8 @@ pub enum DatabaseError<T> {
     MismatchedChecksum(#[from] DataPoisonError<T>),
     /// `crio` can only store an object that takes up `u32::MAX` bytes of space. If you run
     /// into this error you should consider some other library.
-    #[error("inserted data too large, object of {0} bytes > u32::MAX")]
-    DataTooLarge(usize),
+    #[error("inserted data too large")]
+    DataTooLarge(#[from] TryFromIntError),
     /// Serialization/deserialization error for an object.
     #[error(transparent)]
     SerdeError(#[from] bincode::Error),
@@ -175,7 +178,7 @@ where
         if buf.is_empty() {
             return Ok(None);
         }
-        let result = binary_to_vec(buf)?;
+        let result = binary_to_vec(&buf)?;
         Ok(Some(result))
     }
 
@@ -216,12 +219,11 @@ where
     }
 }
 
-fn binary_to_vec<T: DeserializeOwned>(raw_data: Vec<u8>) -> Result<Vec<T>, DatabaseError<T>> {
+fn binary_to_vec<T: DeserializeOwned>(mut raw_data: &[u8]) -> Result<Vec<T>, DatabaseError<T>> {
     let mut is_corrupted = None;
-    let mut f = raw_data.as_slice();
     let mut result = Vec::new();
     loop {
-        let raw_doc = process_document(&mut f);
+        let raw_doc = process_document(&mut raw_data);
         let raw_doc = match raw_doc {
             Ok(d) => d,
             Err(e) => match e {
@@ -263,12 +265,9 @@ fn vec_to_binary<T: Serialize>(data: &[T]) -> Result<Vec<u8>, DatabaseError<T>> 
     for document in data {
         let raw_data = bincode::serialize(&document)?;
         let data_len = raw_data.len();
-        if data_len > u32::MAX as usize {
-            return Err(DatabaseError::DataTooLarge(data_len));
-        }
         let checksum = CRC.checksum(&raw_data);
         buf.write_u32::<LittleEndian>(checksum)?;
-        buf.write_u32::<LittleEndian>(data_len as u32)?;
+        buf.write_u32::<LittleEndian>(u32::try_from(data_len)?)?;
         buf.write_all(&raw_data)?;
     }
     Ok(buf)
@@ -344,7 +343,7 @@ mod tests {
     fn binary_vec_conversion() {
         let test_messages = generate_test_data();
         let binary = vec_to_binary(&test_messages).unwrap();
-        let vec: Vec<Test> = binary_to_vec(binary).unwrap();
+        let vec: Vec<Test> = binary_to_vec(&binary).unwrap();
         assert_eq!(test_messages, vec);
     }
 
