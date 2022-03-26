@@ -205,7 +205,7 @@ where
     ///
     /// # Errors
     ///
-    /// - `DatabaseError<T>::DataTooLarge` occurs when an object you are inserting
+    /// - `std::num::TryFromIntError` occurs when an object you are inserting
     /// takes up more space than `u32::MAX` bytes. In that case, seek help.
     ///
     /// - The usual `std::io::Error` such as `ErrorKind::UnexpectedEof` if the file
