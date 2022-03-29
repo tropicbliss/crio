@@ -92,7 +92,7 @@ pub enum DatabaseError<T> {
     FileHeader,
     /// Wrong file version. Use another version of this library to read the file correctly.
     ///
-    /// File versions:
+    /// # File versions:
     ///
     /// 1: 0.2 versions and below
     /// 2: 0.3 versions and above
