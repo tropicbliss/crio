@@ -89,7 +89,7 @@ pub enum DatabaseError<T> {
     SerdeError(#[from] bincode::Error),
     /// Invalid file header. You might not be reading a valid `crio` file.
     #[error("invalid file header")]
-    FileHeader,
+    WrongFileHeader,
     /// Wrong file version. Use another version of this library to read the file correctly.
     ///
     /// # File versions:
@@ -97,7 +97,7 @@ pub enum DatabaseError<T> {
     /// 1: 0.2 versions and below
     /// 2: 0.3 versions and above
     #[error("wrong file version: expected {}, found {0}", FILE_VERSION)]
-    FileVersion(u32),
+    WrongFileVersion(u32),
 }
 
 #[derive(Error, Debug)]
@@ -276,15 +276,15 @@ fn process_document<R: Read>(f: &mut R) -> Result<Vec<u8>, InnerDatabaseError> {
 fn validate_collection<R: Read, T>(f: &mut R) -> Result<(), DatabaseError<T>> {
     let saved_file_header = f
         .read_u32::<LittleEndian>()
-        .map_err(|_| DatabaseError::FileHeader)?;
+        .map_err(|_| DatabaseError::WrongFileHeader)?;
     if saved_file_header != FILE_HEADER {
-        return Err(DatabaseError::FileHeader);
+        return Err(DatabaseError::WrongFileHeader);
     }
     let saved_file_version = f
         .read_u32::<LittleEndian>()
-        .map_err(|_| DatabaseError::FileVersion(1))?;
+        .map_err(|_| DatabaseError::WrongFileVersion(1))?;
     if saved_file_version != FILE_VERSION {
-        return Err(DatabaseError::FileVersion(saved_file_version));
+        return Err(DatabaseError::WrongFileVersion(saved_file_version));
     }
     Ok(())
 }
