@@ -280,7 +280,7 @@ fn validate_collection<R: Read, T>(f: &mut R) -> Result<(), DatabaseError<T>> {
         return Err(DatabaseError::FileHeader);
     }
     let saved_file_version = f.read_u32::<LittleEndian>()?;
-    if saved_file_header != FILE_VERSION {
+    if saved_file_version != FILE_VERSION {
         return Err(DatabaseError::FileVersion(saved_file_version));
     }
     Ok(())
