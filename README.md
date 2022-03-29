@@ -33,6 +33,6 @@ let returned_messages = client.load()?;
 if let Some(data) = returned_messages {
     assert_eq!(messages, data);
 } else {
-     panic!("File is empty");
+    panic!("File is empty");
 }
 ```
