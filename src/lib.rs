@@ -1,4 +1,5 @@
 #![warn(clippy::pedantic)]
+#![deny(missing_docs)]
 
 //! This crate provides an easy to use API to store persistent data of the same type.
 //!
@@ -52,8 +53,6 @@
 //!     panic!("File is empty");
 //! }
 //! ```
-
-#![deny(missing_docs)]
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crc::{Crc, CRC_32_ISO_HDLC};
