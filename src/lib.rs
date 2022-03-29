@@ -95,6 +95,7 @@ pub enum DatabaseError<T> {
     /// # File versions:
     ///
     /// 1: 0.2 versions and below
+    ///
     /// 2: 0.3 versions and above
     #[error("wrong file version: expected {}, found {0}", FILE_VERSION)]
     WrongFileVersion(u32),
