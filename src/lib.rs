@@ -70,6 +70,9 @@ use std::{
 };
 use thiserror::Error;
 
+const FILE_HEADER: u32 = 67297350;
+const FILE_VERSION: u32 = 2;
+
 /// This is the main error type of this crate.
 #[derive(Error, Debug)]
 pub enum DatabaseError<T> {
@@ -88,6 +91,12 @@ pub enum DatabaseError<T> {
     /// Serialization/deserialization error for an object.
     #[error(transparent)]
     SerdeError(#[from] bincode::Error),
+    /// Invalid file header
+    #[error("invalid file header")]
+    FileHeader,
+    /// Wrong file version
+    #[error("wrong file version: expected {}, found {0}", FILE_VERSION)]
+    FileVersion(u32),
 }
 
 #[derive(Error, Debug)]
@@ -222,6 +231,7 @@ where
 }
 
 fn binary_to_vec<T: DeserializeOwned>(mut raw_data: &[u8]) -> Result<Vec<T>, DatabaseError<T>> {
+    validate_collection(&mut raw_data)?;
     let mut is_corrupted = None;
     let mut result = Vec::new();
     loop {
@@ -262,8 +272,24 @@ fn process_document<R: Read>(f: &mut R) -> Result<Vec<u8>, InnerDatabaseError> {
     Ok(data)
 }
 
+fn validate_collection<R: Read, T>(f: &mut R) -> Result<(), DatabaseError<T>> {
+    let saved_file_header = f
+        .read_u32::<LittleEndian>()
+        .map_err(|_| DatabaseError::FileHeader)?;
+    if saved_file_header != FILE_HEADER {
+        return Err(DatabaseError::FileHeader);
+    }
+    let saved_file_version = f.read_u32::<LittleEndian>()?;
+    if saved_file_header != FILE_VERSION {
+        return Err(DatabaseError::FileVersion(saved_file_version));
+    }
+    Ok(())
+}
+
 fn vec_to_binary<T: Serialize>(data: &[T]) -> Result<Vec<u8>, DatabaseError<T>> {
     let mut buf = Vec::new();
+    buf.write_u32::<LittleEndian>(FILE_HEADER)?;
+    buf.write_u32::<LittleEndian>(FILE_VERSION)?;
     for document in data {
         let raw_data = bincode::serialize(&document)?;
         let data_len = raw_data.len();
