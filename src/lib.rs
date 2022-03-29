@@ -18,10 +18,6 @@
 //! for this task, such as `sled`:
 //! <https://github.com/spacejam/sled>
 //!
-//! This library is once primarily for my own personal use. However I simply decided to open-source it just in case
-//! anyone finds this useful. There are no file headers or data versioning support in the created file,
-//! but the format of the data should remain stable for the forseeable future.
-//!
 //! # Example
 //!
 //! ```ignore
@@ -91,10 +87,15 @@ pub enum DatabaseError<T> {
     /// Serialization/deserialization error for an object.
     #[error(transparent)]
     SerdeError(#[from] bincode::Error),
-    /// Invalid file header
+    /// Invalid file header. You might not be reading a valid `crio` file.
     #[error("invalid file header")]
     FileHeader,
-    /// Wrong file version
+    /// Wrong file version. Use another version of this library to read the file correctly.
+    ///
+    /// File versions:
+    ///
+    /// 1: 0.2 versions and below
+    /// 2: 0.3 versions and above
     #[error("wrong file version: expected {}, found {0}", FILE_VERSION)]
     FileVersion(u32),
 }
@@ -279,7 +280,9 @@ fn validate_collection<R: Read, T>(f: &mut R) -> Result<(), DatabaseError<T>> {
     if saved_file_header != FILE_HEADER {
         return Err(DatabaseError::FileHeader);
     }
-    let saved_file_version = f.read_u32::<LittleEndian>()?;
+    let saved_file_version = f
+        .read_u32::<LittleEndian>()
+        .map_err(|_| DatabaseError::FileVersion(1))?;
     if saved_file_version != FILE_VERSION {
         return Err(DatabaseError::FileVersion(saved_file_version));
     }
