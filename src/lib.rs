@@ -1,5 +1,3 @@
-#![warn(clippy::pedantic)]
-
 //! This crate provides an easy to use API to store persistent data of the same type.
 //!
 //! Any type that is able to be deserialized or serialized using Serde can be stored on disk.
