@@ -2,7 +2,8 @@
 //!
 //! Any type that is able to be deserialized or serialized using Serde can be stored on disk.
 //! Data is stored on disk with a CRC32 checksum associated with every document to ensure
-//! data integrity.
+//! data integrity. All data is written in little endian and each document is deserialized into bytes
+//! via `bincode` when writing to file.
 //!
 //! The client has two modes: append mode and overwrite mode (non-append mode). Append mode appends
 //! data to the original file when any of the write methods are called while overwrite mode overwrites
