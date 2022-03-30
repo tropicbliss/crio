@@ -2,8 +2,13 @@
 
 //! This crate provides an easy to use API to store persistent data of the same type.
 //!
+//! # Note
+//!
+//! This documentation uses terminology derived from document-oriented databases (e.g. MongoDB)
+//! such as "document" or "collection".
+//!
 //! Any type that is able to be deserialized or serialized using Serde can be stored on disk.
-//! Data is stored on disk with a CRC32 checksum associated with every object to ensure
+//! Data is stored on disk with a CRC32 checksum associated with every document to ensure
 //! data integrity.
 //!
 //! The client has two modes: append mode and overwrite mode (non-append mode). Append mode appends
@@ -71,25 +76,23 @@ pub enum DatabaseError {
     /// This returns `std::io::Error`
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    /// This error occurs if the saved checksum does not match the expected checksum of the saved object.
+    /// This error occurs if the saved checksum does not match the expected checksum of the saved document.
     /// This is likely due to data corruption. Data backup is outside the scope of this crate,
     /// thus an external backup solution is recommended.
     #[error("data corruption encountered ({expected:08x} != {saved:08x})")]
     MismatchedChecksum { saved: u32, expected: u32 },
-    /// `crio` can only store an object that takes up `u32::MAX` bytes of space. If you run
+    /// `crio` can only store a document that takes up `u32::MAX` bytes of space. If you run
     /// into this error you should consider some other library.
-    #[error("inserted data too large (object > u32::MAX)")]
+    #[error("inserted data too large (document > u32::MAX)")]
     DataTooLarge(#[from] TryFromIntError),
-    /// Serialization/deserialization error for an object.
+    /// Serialization/deserialization error for a document.
     #[error(transparent)]
     SerdeError(#[from] bincode::Error),
 }
 
 const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
 
-/// An object that is responsible for handling IO operations with regards to file
-/// opening/closing/writing as well as serialization and deserialization.
-/// The main data type of this crate.
+/// Responsible for handling IO operations as well as serialization and deserialization.
 pub struct Client<T: Serialize + DeserializeOwned> {
     file: File,
     _phantom: std::marker::PhantomData<T>,
@@ -99,9 +102,9 @@ impl<T> Client<T>
 where
     T: Serialize + DeserializeOwned,
 {
-    /// Creates a new client object. It opens a file if a file with the same name exists or
-    /// creates a new file if it doesn't exist. Set the `append` parameter to false if you want to
-    /// overwrite all data while calling `write()` or `write_many()`, or true if you
+    /// Creates a new client. It opens the file if a file with the same name exists or
+    /// creates a new file if it doesn't exist. Set the `append` parameter to `false` if you want to
+    /// overwrite all data while calling `write()` or `write_many()`, or `true` if you
     /// simply want to append data to the file.
     ///
     /// # Errors
@@ -128,23 +131,20 @@ where
         })
     }
 
-    /// Returns a vector of the deserialized object. If the file is empty, this method
+    /// Returns a collection. If the file is empty, this method
     /// returns `Ok(None)`.
     ///
     /// # Errors
     ///
-    /// - If a checksum mismatch occurs, a `DataPoisonError<T>` is
-    /// returned, in which you can get the underlying deserialized objects via the
-    /// method `into_inner()`.
+    /// - If a checksum mismatch occurs, an `DatabaseError::MismatchedChecksum` error
+    /// is returned.
     ///
     /// - `bincode::Error` occurs if the deserializer fails to deserialize bytes from
-    /// the file to your requested object. In that case, the most probable reason
+    /// the file to your requested document type. In that case, the most probable reason
     /// is that the data in that file stores some other data type and you are
     /// attempting to deserialize it to the wrong data type.
     ///
-    /// - The usual `std::io::Error` such as `ErrorKind::UnexpectedEof` if the file
-    /// that is being accessed is malformed and there are no more bytes to be read
-    /// when the method is expecting more data.
+    /// - `std::io::Error`
     pub fn load(&mut self) -> Result<Option<Vec<T>>, DatabaseError> {
         let mut buf = Vec::new();
         self.file.seek(SeekFrom::Start(0))?;
@@ -156,38 +156,36 @@ where
         Ok(Some(result))
     }
 
-    /// Writes the provided serializable objects to disk. If no file is found,
+    /// Writes the provided serializable documents to disk. If no file is found,
     /// a new file will be created and written to.
     ///
     /// # Errors
     ///
-    /// - `std::num::TryFromIntError` occurs when an object you are inserting
-    /// takes up more space than `u32::MAX` bytes. In that case, seek help.
+    /// - `std::num::TryFromIntError` occurs when a document you are inserting
+    /// takes up more space than `u32::MAX` bytes.
     ///
-    /// - The usual `std::io::Error` such as `ErrorKind::UnexpectedEof` if the file
-    /// that is being accessed is malformed and there are no more bytes to be read
-    /// when the method is expecting more data.
+    /// - `std::io::Error`
     ///
-    /// - Serialization errors when the data provided fails to serialize for some reason.
-    pub fn write_many(&mut self, data: &[T]) -> Result<(), DatabaseError> {
-        let buf = vec_to_binary(data)?;
+    /// - `bincode::Error` when the documents provided fails to serialize for some reason.
+    pub fn write_many(&mut self, documents: &[T]) -> Result<(), DatabaseError> {
+        let buf = vec_to_binary(documents)?;
         self.file.write_all(&buf)?;
         Ok(())
     }
 
-    /// Writes the provided serializable object to disk. If no file is found,
+    /// Writes the provided serializable document to disk. If no file is found,
     /// a new file will be created and written to.
     ///
     /// # Errors
     ///
-    /// - `std::num::TryFromIntError` occurs when an object you are inserting
-    /// takes up more space than `u32::MAX` bytes. In that case, seek help.
+    /// - `std::num::TryFromIntError` occurs when a document you are inserting
+    /// takes up more space than `u32::MAX` bytes.
     ///
-    /// - The usual `std::io::Error` such as `ErrorKind::UnexpectedEof` if the file
-    /// that is being accessed is malformed and there are no more bytes to be read
-    /// when the method is expecting more data.
-    pub fn write(&mut self, data: &T) -> Result<(), DatabaseError> {
-        let buf = vec_to_binary(std::array::from_ref(data))?;
+    /// - `std::io::Error`
+    ///
+    /// - `bincode::Error` when the document provided fails to serialize for some reason.
+    pub fn write(&mut self, document: &T) -> Result<(), DatabaseError> {
+        let buf = vec_to_binary(std::array::from_ref(document))?;
         self.file.write_all(&buf)?;
         Ok(())
     }
