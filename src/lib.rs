@@ -132,6 +132,9 @@ where
     /// Returns a collection. If the file is empty, this method
     /// returns `Ok(None)`.
     ///
+    /// The collection is returned in the order in which the documents
+    /// were inserted into the file previously.
+    ///
     /// # Errors
     ///
     /// - If a checksum mismatch occurs, an `DatabaseError::MismatchedChecksum` error
