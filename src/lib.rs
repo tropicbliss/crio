@@ -167,6 +167,7 @@ where
     /// - `bincode::Error` when the documents provided fails to serialize for some reason.
     pub fn write_many(&mut self, documents: &[T]) -> Result<(), DatabaseError> {
         let buf = vec_to_binary(documents)?;
+        self.file.seek(SeekFrom::End(0))?;
         self.file.write_all(&buf)?;
         Ok(())
     }
@@ -184,6 +185,7 @@ where
     /// - `bincode::Error` when the document provided fails to serialize for some reason.
     pub fn write(&mut self, document: &T) -> Result<(), DatabaseError> {
         let buf = vec_to_binary(std::array::from_ref(document))?;
+        self.file.seek(SeekFrom::End(0))?;
         self.file.write_all(&buf)?;
         Ok(())
     }
