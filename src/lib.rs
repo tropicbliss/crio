@@ -14,7 +14,7 @@
 //! onto memory when calling load on a `Client<T>`, handling large amounts of data is not advised. However,
 //! the data stored on disk has a relatively small footprint and should not take up that much space.
 //!
-//! Note that this is not an embedded database and there are other libraries which are better suited
+//! Note that this is not an embedded database and there are other crates which are better suited
 //! for this task, such as `sled`:
 //! <https://github.com/spacejam/sled>
 //!
