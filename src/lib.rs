@@ -2,11 +2,6 @@
 
 //! This crate provides an easy to use API to store persistent data of the same type.
 //!
-//! # Note
-//!
-//! This documentation uses terminology derived from document-oriented databases (e.g. MongoDB)
-//! such as "document" or "collection".
-//!
 //! Any type that is able to be deserialized or serialized using Serde can be stored on disk.
 //! Data is stored on disk with a CRC32 checksum associated with every document to ensure
 //! data integrity.
@@ -23,6 +18,11 @@
 //! Note that this is not an embedded database and there are other libraries which are better suited
 //! for this task, such as `sled`:
 //! <https://github.com/spacejam/sled>
+//!
+//! # Note
+//!
+//! This documentation uses terminology derived from document-oriented databases (e.g. MongoDB)
+//! such as "document" or "collection".
 //!
 //! # Example
 //!
