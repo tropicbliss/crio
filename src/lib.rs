@@ -79,7 +79,7 @@ pub enum DatabaseError {
     /// thus an external backup solution is recommended.
     #[error("data corruption encountered ({expected:08x} != {saved:08x})")]
     MismatchedChecksum { saved: u32, expected: u32 },
-    /// `crio` can only store a document that takes up `u32::MAX` bytes of space. If you run
+    /// This crate can only store a document that takes up `u32::MAX` bytes of space. If you run
     /// into this error you should consider some other library.
     #[error("inserted data too large (document > u32::MAX)")]
     DataTooLarge(#[from] TryFromIntError),
