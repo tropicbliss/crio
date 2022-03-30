@@ -1,18 +1,14 @@
 //! This crate provides an easy to use API to store persistent data of the same type.
 //!
-//! Any type that is able to be deserialized or serialized using Serde can be stored on disk.
+//! Any type that is able to be deserialized or serialized using `serde` can be stored on disk.
 //! Data is stored on disk with a CRC32 checksum associated with every document to ensure
-//! data integrity. All data is written in little endian and each document is deserialized into bytes
-//! via `bincode` when writing to file.
-//!
-//! The client has two modes: append mode and overwrite mode (non-append mode). Append mode appends
-//! data to the original file when any of the write methods are called while overwrite mode overwrites
-//! data in the file with new data provided.
+//! data integrity. Each document is deserialized into bytes
+//! via `bincode` when writing to file. All data is stored in little-endian order.
 //!
 //! This crate is meant for storing small serializable data that stores the state of an application
 //! after exit. Since all the data is loaded
-//! onto memory when calling load on a `Client<T>`, handling large amounts of data is not advised. However,
-//! the data stored on disk has a relatively small footprint and should not take up that much space.
+//! into memory when calling load on a `Client<T>`, handling large amounts of data is not advised. However,
+//! the data stored on disk has a relatively small footprint and should not take up much space.
 //!
 //! Note that this is not an embedded database and there are other crates which are better suited
 //! for this task, such as `sled`:
@@ -49,7 +45,7 @@
 //! };
 //! let messages = vec![msg1, msg2, msg3];
 //! let client: Client<Message> = Client::new("messages", false)?; // If no file is found, a new empty file is created.
-//! client.write_many(&messages)?; // If no file is found, a new file is created and then written to. Append is set to false such that it overwrites any previous value stored on the same file
+//! client.write_many(&messages)?; // If no file is found, a new file is created and then written to. Since append is set to false for its client, this method overwrites any previous value stored on the same file
 //! let returned_messages = client.load()?;
 //! if let Some(data) = returned_messages {
 //!     assert_eq!(messages, data);
@@ -77,7 +73,7 @@ pub enum DatabaseError {
     Io(#[from] std::io::Error),
     /// This error occurs if the saved checksum does not match the expected checksum of the saved document.
     /// This is likely due to data corruption. Data backup is outside the scope of this crate,
-    /// thus an external backup solution is recommended.
+    /// thus an external backup solution is strongly recommended.
     #[error("data corruption encountered ({expected:08x} != {saved:08x})")]
     MismatchedChecksum { saved: u32, expected: u32 },
     /// This crate can only store a document that takes up `u32::MAX` bytes of space. If you run
@@ -103,12 +99,12 @@ where
 {
     /// Creates a new client. It opens the file if a file with the same name exists or
     /// creates a new file if it doesn't exist. Set the `append` parameter to `false` if you want to
-    /// overwrite all data while calling `write()` or `write_many()`, or `true` if you
+    /// overwrite all data while calling `write()` or `write_many()` or `true` if you
     /// simply want to append data to the file.
     ///
     /// # Errors
     ///
-    /// - The usual `std::io::Error` if it fails to open or create a new file.
+    /// - Returns `std::io::Error` if it fails to open or create a new file.
     pub fn new<P: AsRef<Path>>(path: P, append: bool) -> Result<Self, DatabaseError> {
         let file = if append {
             OpenOptions::new()
@@ -138,12 +134,12 @@ where
     ///
     /// # Errors
     ///
-    /// - If a checksum mismatch occurs, an `DatabaseError::MismatchedChecksum` error
+    /// - If a checksum mismatch occurs, a `DatabaseError::MismatchedChecksum` error
     /// is returned.
     ///
     /// - `bincode::Error` occurs if the deserializer fails to deserialize bytes from
     /// the file to your requested document type. In that case, the most probable reason
-    /// is that the data in that file stores some other data type and you are
+    /// is that the data in that file stores data of some other data type and you are
     /// attempting to deserialize it to the wrong data type.
     ///
     /// - `std::io::Error`
