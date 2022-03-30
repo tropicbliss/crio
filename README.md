@@ -8,7 +8,7 @@ An easy to use persistent data storage library. Integrates well with Serde.
 use crio::Client;
 use serde_derive::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize)]
 struct Message {
     id: usize,
     message: String,
