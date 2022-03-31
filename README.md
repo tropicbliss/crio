@@ -2,7 +2,7 @@
 
 <a href="https://docs.rs/crio"><img src="https://docs.rs/crio/badge.svg"></a>
 
-An easy to use persistent data storage library. Integrates well with Serde.
+An easy to use persistent data storage library. Integrates well with `serde`.
 
 ## Usage
 
