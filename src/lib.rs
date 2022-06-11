@@ -2,7 +2,7 @@
 //!
 //! Any type that is able to be deserialized or serialized using `serde` can be stored on disk.
 //! Data is stored on disk with a CRC32 checksum associated with every document to ensure
-//! data integrity. Each document is deserialized into bytes
+//! data integrity and compressed with Zlib. Each document is deserialized into bytes
 //! via `bincode` when writing to file. All data is stored in little-endian order.
 //!
 //! This crate is meant for storing small serializable data that stores the state of an application
@@ -56,6 +56,7 @@
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crc::{Crc, CRC_32_ISO_HDLC};
+use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     fs::{File, OpenOptions},
@@ -191,8 +192,9 @@ where
     }
 }
 
-fn binary_to_vec<T: DeserializeOwned>(mut raw_data: &[u8]) -> Result<Vec<T>, DatabaseError> {
+fn binary_to_vec<T: DeserializeOwned>(raw_data: &[u8]) -> Result<Vec<T>, DatabaseError> {
     let mut result = Vec::new();
+    let mut raw_data = ZlibDecoder::new(raw_data);
     loop {
         let raw_doc = process_document(&mut raw_data);
         let raw_doc = match raw_doc {
@@ -226,7 +228,7 @@ fn process_document<R: Read>(f: &mut R) -> Result<Vec<u8>, DatabaseError> {
 }
 
 fn vec_to_binary<T: Serialize>(data: &[T]) -> Result<Vec<u8>, DatabaseError> {
-    let mut buf = Vec::new();
+    let mut buf = ZlibEncoder::new(Vec::new(), Compression::default());
     for document in data {
         let raw_data = bincode::serialize(&document)?;
         let data_len = raw_data.len();
@@ -235,7 +237,8 @@ fn vec_to_binary<T: Serialize>(data: &[T]) -> Result<Vec<u8>, DatabaseError> {
         buf.write_u32::<LittleEndian>(u32::try_from(data_len)?)?;
         buf.write_all(&raw_data)?;
     }
-    Ok(buf)
+    let result = buf.finish()?;
+    Ok(result)
 }
 
 #[cfg(test)]
