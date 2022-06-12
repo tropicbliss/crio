@@ -4,7 +4,7 @@
 
 An easy to use persistent data storage library. Integrates well with `serde`.
 
-Version 2 of this crate is incompatible with files created with version 1 of this library.
+Version 2 of this crate is incompatible with files created with version 1 of this crate.
 
 ## Usage
 

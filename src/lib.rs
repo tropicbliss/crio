@@ -19,6 +19,8 @@
 //! This documentation uses terminology derived from document-oriented databases (e.g. MongoDB)
 //! such as "document" or "collection".
 //!
+//! Version 2 of this crate is incompatible with files created with version 1 of this crate.
+//!
 //! # Example
 //!
 //! ```ignore
@@ -153,6 +155,26 @@ where
         }
         let result = binary_to_vec(&buf)?;
         Ok(Some(result))
+    }
+
+    /// Validates if the checksum of the documents in the collection matches its
+    /// corresponding stored checksum value. This is an efficient way to determine
+    /// if a file has possibly been corrupted. Returns `Ok(true)` if the file has
+    /// no checksum mismatches and `Ok(false)` if the opposite is true.
+    ///
+    /// # Errors
+    ///
+    /// - `std::io::Error`
+
+    pub fn validate(&mut self) -> Result<bool, DatabaseError> {
+        let mut buf = Vec::new();
+        self.file.seek(SeekFrom::Start(0))?;
+        self.file.read_to_end(&mut buf)?;
+        match process_document(&mut buf.as_slice()) {
+            Ok(_) => Ok(true),
+            Err(e) if matches!(e, DatabaseError::MismatchedChecksum { .. }) => Ok(false),
+            Err(e) => Err(e),
+        }
     }
 
     /// Writes the provided serializable documents to disk. If no file is found,
