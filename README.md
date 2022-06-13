@@ -2,9 +2,7 @@
 
 <a href="https://docs.rs/crio"><img src="https://docs.rs/crio/badge.svg"></a>
 
-An easy to use persistent data storage library. Integrates well with Serde.
-
-Version 2 of this crate is incompatible with files created with version 1 of this crate.
+An easy to use persistent data storage library. Integrates well with `serde`.
 
 ## Usage
 
