@@ -1,6 +1,10 @@
 [package]
 name = "crio"
+<<<<<<< HEAD
 version = "2.0.2"
+=======
+version = "1.0.0"
+>>>>>>> parent of 2ec6f5d (Final commit)
 edition = "2021"
 authors = ["tropicbliss <tropicbliss@protonmail.com>"]
 license = "MIT"
