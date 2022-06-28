@@ -167,9 +167,6 @@ where
         let mut buf = Vec::new();
         self.file.seek(SeekFrom::Start(0))?;
         self.file.read_to_end(&mut buf)?;
-        if buf.is_empty() {
-            return Ok(true);
-        }
         loop {
             match process_document(&mut buf.as_slice()) {
                 Ok(_) => (),
