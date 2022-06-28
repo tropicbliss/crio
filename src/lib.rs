@@ -99,7 +99,7 @@ where
 {
     /// Creates a new client. It opens the file if a file with the same name exists or
     /// creates a new file if it doesn't exist. Set the `append` parameter to `false` if you want to
-    /// overwrite all data while calling `write()` or `write_many()` or `true` if you
+    /// overwrite all data while calling `write()` or `write_many()`, or `true` if you
     /// simply want to append data to the file.
     ///
     /// # Errors
