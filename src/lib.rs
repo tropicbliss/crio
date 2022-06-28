@@ -170,11 +170,15 @@ where
         if buf.is_empty() {
             return Ok(true);
         }
-        match process_document(&mut buf.as_slice()) {
-            Ok(_) => Ok(true),
-            Err(e) if matches!(e, DatabaseError::MismatchedChecksum { .. }) => Ok(false),
-            Err(e) => Err(e),
+        loop {
+            match process_document(&mut buf.as_slice()) {
+                Ok(_) => (),
+                Err(DatabaseError::MismatchedChecksum { .. }) => return Ok(false),
+                Err(DatabaseError::Io(e)) if e.kind() == ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e),
+            }
         }
+        Ok(true)
     }
 
     /// Writes the provided serializable documents to disk. If no file is found,
